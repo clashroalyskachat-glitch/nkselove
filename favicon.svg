@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="НКСЭ">
+    <defs>
+        <linearGradient id="leather" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#2b1d12"/>
+            <stop offset="1" stop-color="#140e09"/>
+        </linearGradient>
+        <linearGradient id="brass" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#f0d6b4"/>
+            <stop offset="1" stop-color="#b47c48"/>
+        </linearGradient>
+    </defs>
+    <rect width="64" height="64" rx="15" fill="url(#leather)"/>
+    <rect x="1" y="1" width="62" height="62" rx="14" fill="none" stroke="#c99a63" stroke-opacity=".35"/>
+    <path d="M16 18h14v28H16z" fill="none" stroke="#8fa8cf" stroke-width="3"/>
+    <path d="M34 24h14v26H34z" fill="none" stroke="url(#brass)" stroke-width="3"/>
+</svg>

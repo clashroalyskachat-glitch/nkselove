@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>НКСЭ — расписание и библиотека</title>
+    <meta name="description" content="НКСЭ — Новороссийский колледж строительства и экономики: расписание занятий и электронная библиотека.">
+    <meta name="theme-color" content="#08080a">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css?v=4">
+
+    <script>
+        /*
+         * Тема до первой отрисовки: по умолчанию тёмная,
+         * светлая включается только если её выбрали вручную.
+         */
+        (function () {
+            try {
+                if (localStorage.getItem('hub.theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            } catch (e) { /* приватный режим - тёмная */ }
+        })();
+    </script>
+</head>
+<body>
+
+<div class="bg" aria-hidden="true">
+    <span class="glow glow-warm"></span>
+    <span class="glow glow-cold"></span>
+    <span class="shade"></span>
+</div>
+
+<div class="grain" aria-hidden="true"></div>
+
+<main class="wrap">
+
+    <header class="top">
+        <div class="brand">
+            <span class="brand-text">
+                <span class="brand-name">НКСЭ</span>
+                <span class="brand-note">Новороссийский колледж строительства и экономики</span>
+            </span>
+        </div>
+
+        <button class="icon-btn" id="theme-btn" type="button" aria-label="Сменить тему" title="Сменить тему">
+            <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="4.2"/>
+                <path d="M12 2v2.2M12 19.8V22M2 12h2.2M19.8 12H22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M19.1 4.9l-1.6 1.6M6.5 17.5l-1.6 1.6"/>
+            </svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>
+            </svg>
+        </button>
+    </header>
+
+    <section class="hero">
+        <p class="eyebrow"><span class="pulse" aria-hidden="true"></span>Личное пространство</p>
+        <h1>Всё <em>под рукой</em></h1>
+        <p class="lede">
+            Расписание пар и учебники — в одном месте.
+            Выбери, что открыть.
+        </p>
+    </section>
+
+    <nav class="choices" aria-label="Разделы">
+
+        <a class="card card-schedule" href="/mypars/">
+            <span class="strap" aria-hidden="true"></span>
+
+            <span class="card-top">
+                <span class="badge" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/>
+                        <path d="M3.5 9.6h17M8 3.2v3.4M16 3.2v3.4"/>
+                        <path d="M7.6 12.9h2.2M13.9 12.9h2.2M7.6 16.6h2.2M13.9 16.6h2.2"/>
+                    </svg>
+                </span>
+                <span class="num">01</span>
+            </span>
+
+            <span class="card-main">
+                <span class="kicker">Учёба</span>
+                <span class="card-title">Расписание</span>
+                <span class="card-note">Пары на сегодня, звонки и замены</span>
+            </span>
+
+            <span class="card-link">
+                Открыть
+                <span class="arrow" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 12h13M12.5 5.5L19 12l-6.5 6.5"/>
+                    </svg>
+                </span>
+            </span>
+
+            <span class="art art-schedule" aria-hidden="true">
+                <span class="week">
+                    <i data-d="пн" style="--h:46%"></i>
+                    <i data-d="вт" class="is-on" style="--h:74%"></i>
+                    <i data-d="ср" style="--h:34%"></i>
+                    <i data-d="чт" class="is-hot" style="--h:92%"></i>
+                    <i data-d="пт" class="is-on" style="--h:58%"></i>
+                </span>
+            </span>
+        </a>
+
+        <a class="card card-library" href="/mypars/library/">
+            <span class="strap" aria-hidden="true"></span>
+
+            <span class="card-top">
+                <span class="badge" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 4.8A2.3 2.3 0 0 1 6.3 2.5H19v17.2H6.3A2.3 2.3 0 0 0 4 22z"/>
+                        <path d="M4 4.8V22M19 19.7v2.2H6.3"/>
+                    </svg>
+                </span>
+                <span class="num">02</span>
+            </span>
+
+            <span class="card-main">
+                <span class="kicker">Книги</span>
+                <span class="card-title">Библиотека</span>
+                <span class="card-note">Учебники из Google Drive — читать прямо на сайте</span>
+            </span>
+
+            <span class="card-link">
+                Открыть
+                <span class="arrow" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 12h13M12.5 5.5L19 12l-6.5 6.5"/>
+                    </svg>
+                </span>
+            </span>
+
+            <span class="art art-books" aria-hidden="true">
+                <span class="shelf">
+                    <i style="--w:21px;--h:82%;--a:.9"></i>
+                    <i style="--w:26px;--h:96%;--a:.65"></i>
+                    <i style="--w:18px;--h:74%;--a:.45"></i>
+                    <i style="--w:24px;--h:88%;--a:.78"></i>
+                </span>
+            </span>
+        </a>
+
+    </nav>
+
+    <footer class="foot">
+        <p class="today" id="today"></p>
+        <p class="made">Собрано для себя · <span id="year"></span></p>
+    </footer>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1405 @@
+<!DOCTYPE html>
+<html lang="ru" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Расписание НКСЭ</title>
+    <meta name="description" content="Расписание занятий НКСЭ — по группам и дням, с поиском по преподавателям и кабинетам.">
+    <link rel="manifest" href="manifest.json">
+    <!-- No preload for schedule.json: the service worker answers that fetch in
+         a separate world, so the preloaded response is never reused. It used to
+         download the whole payload twice on a cold visit and waste it on every
+         cached one. The plain fetch below is faster in practice. -->
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icon.svg">
+    <meta name="theme-color" content="#000000">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="НКСЭ">
+    <!-- Google Fonts: Plus Jakarta Sans -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+<!-- Tailwind is prebuilt into app.css. The Play CDN used to compile the
+         same rules in the browser on every load: ~110 KB of blocking JS plus
+         the JIT work, which is the most expensive thing on a weak phone.
+         Rebuild with: npm run build:css -->
+    <link rel="stylesheet" href="app.css">
+    <style>
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+        /* iOS-style Animations */
+        @keyframes slideTab {
+            0% { transform: translateX(0); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        @keyframes rotate360 {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .day-tab {
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+        /* Card entrance: 30px rise from above, 0.4s ease, 0.05s stagger.
+           Day cards are NOT animated - matching the original look.
+           Only change vs original: fill-mode "backwards" instead of
+           "forwards" + a bare `opacity: 0`, so cards can never be left
+           invisible if the animation is skipped. */
+        .schedule-card {
+            animation: fadeInUp 0.52s cubic-bezier(0.25, 0.46, 0.45, 0.94) backwards;
+        }
+        @keyframes fadeInUp {
+            0% { transform: translateY(36px); opacity: 0; }
+            100% { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes fadeIn {
+            0% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+        /* smooth, eased hover + focus travel */
+        .schedule-card,
+        .day-card,
+        .quick-btn,
+        .pin-btn,
+        .search-input,
+        .day-tab {
+            transition:
+                transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1),
+                border-color 0.3s ease,
+                background-color 0.3s ease,
+                color 0.3s ease,
+                box-shadow 0.3s ease;
+        }
+        @media (hover: hover) {
+            .schedule-card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 10px 26px -14px rgb(168 85 247 / 0.45);
+            }
+        }
+        @media (max-width: 640px) {
+            #days-tabs {
+                transition: transform 0.25s ease;
+            }
+        }
+        [data-theme="dark"] body {
+            background-color: #000000 !important;
+            background-image: none !important;
+            color: #ffffff !important;
+            min-height: 100vh;
+        }
+        [data-theme="dark"] header {
+            background: #000000 !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            border-bottom: 1px solid #ffffff !important;
+            box-shadow: none !important;
+            color: #ffffff !important;
+        }
+        [data-theme="dark"] footer {
+            background: #000000 !important;
+            backdrop-filter: none !important;
+            border-top: 1px solid #ffffff !important;
+            color: #ffffff !important;
+        }
+        [data-theme="dark"] .bg-white {
+            background: #000000 !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            border: 1px solid #ffffff !important;
+            box-shadow: none !important;
+            color: #ffffff !important;
+        }
+        [data-theme="dark"] .bg-slate-50,
+        [data-theme="dark"] .bg-slate-100 {
+            background: #000000 !important;
+            backdrop-filter: none !important;
+            border: 1px solid #ffffff !important;
+            color: #ffffff !important;
+        }
+        [data-theme="dark"] .bg-slate-200 {
+            background: #000000 !important;
+            backdrop-filter: none !important;
+            border: 1px solid #ffffff !important;
+            color: #ffffff !important;
+        }
+        [data-theme="dark"] .text-slate-900,
+        [data-theme="dark"] .text-slate-800,
+        [data-theme="dark"] .text-slate-700,
+        [data-theme="dark"] h1,
+        [data-theme="dark"] h3,
+        [data-theme="dark"] h4,
+        [data-theme="dark"] .text-slate-600,
+        [data-theme="dark"] .text-slate-500 {
+            color: #ffffff !important;
+            font-weight: 800;
+            text-shadow: none !important;
+        }
+        [data-theme="dark"] .border-slate-200,
+        [data-theme="dark"] .border-slate-300 {
+            border-color: #ffffff !important;
+        }
+        [data-theme="dark"] #days-tabs {
+            background-color: #000000 !important;
+            border-color: #ffffff !important;
+        }
+         [data-theme="dark"] #days-tabs button {
+             background-color: #000000 !important;
+             border-color: #ffffff !important;
+             color: #ffffff !important;
+         }
+         [data-theme="dark"] #days-tabs button.day-tab-active,
+         [data-theme="dark"] #days-tabs button[class*="text-purple-400"] {
+             background-color: transparent !important;
+             color: #a855f7 !important;
+             border-color: #a855f7 !important;
+         }
+         [data-theme="dark"] select,
+        [data-theme="dark"] button:not(.bg-blue-600) {
+            background: #000000 !important;
+            backdrop-filter: none !important;
+            color: #ffffff !important;
+            border: 1px solid #ffffff !important;
+        }
+        /* Lesson card overrides - pure black & white */
+        [data-theme="dark"] #schedule-container > div {
+            background: #000000 !important;
+            border: 1px solid #ffffff !important;
+            box-shadow: none !important;
+        }
+        [data-theme="dark"] #schedule-container .bg-emerald-50,
+        [data-theme="dark"] #schedule-container .bg-slate-50,
+        [data-theme="dark"] #schedule-container .bg-slate-100,
+        [data-theme="dark"] #schedule-container .bg-white {
+            background: #000000 !important;
+        }
+        [data-theme="dark"] #schedule-container .border-slate-200,
+        [data-theme="dark"] #schedule-container .border-slate-800,
+        [data-theme="dark"] #schedule-container .border-slate-700 {
+            border-color: #ffffff !important;
+        }
+        [data-theme="dark"] #schedule-container .text-slate-700,
+        [data-theme="dark"] #schedule-container .text-slate-300,
+        [data-theme="dark"] #schedule-container .text-slate-900,
+        [data-theme="dark"] #schedule-container .text-white {
+            color: #ffffff !important;
+        }
+        [data-theme="dark"] #schedule-container .bg-emerald-600 {
+            background: #000000 !important;
+            border: 1px solid #ffffff !important;
+            color: #ffffff !important;
+        }
+        [data-theme="dark"] #schedule-container .bg-blue-50,
+        [data-theme="dark"] #schedule-container .bg-blue-950\/50 {
+            background: #000000 !important;
+        }
+        [data-theme="dark"] #schedule-container .text-blue-700,
+        [data-theme="dark"] #schedule-container .text-blue-300 {
+            color: #ffffff !important;
+        }
+        [data-theme="dark"] #schedule-container .border-blue-200,
+        [data-theme="dark"] #schedule-container .border-blue-800 {
+            border-color: #ffffff !important;
+        }
+
+        /* ============================================================
+           FLUID SCALE — one continuous ramp for every screen size.
+           Phone -> tablet -> laptop -> desktop -> 4K TV.
+           Sizes are rem-based so the :root font-size steps below
+           scale the whole layout up on living-room displays.
+           ============================================================ */
+        :root {
+            /* type — flat up to ~1600px (original compact sizes), then grows */
+            --fs-badge:  clamp(0.750rem, 0.42rem + 0.22vw, 1.000rem);
+            --fs-meta:   clamp(0.8125rem, 0.46rem + 0.24vw, 1.0625rem);
+            --fs-subj:   clamp(1.000rem, 0.55rem + 0.30vw, 1.375rem);
+            --fs-day:    clamp(1.0625rem, 0.60rem + 0.32vw, 1.500rem);
+            --fs-title:  clamp(1.000rem, 0.55rem + 0.30vw, 1.375rem);
+
+            /* spacing — stays compact like the original design */
+            --pad-x:     clamp(1rem,     0.35rem + 0.55vw, 3rem);
+            --pad-y:     clamp(1.5rem,   1.20rem + 0.20vw, 3rem);
+            --pad-card:  clamp(1rem,     0.82rem + 0.12vw, 1.375rem);
+            --pad-day:   calc(var(--pad-card) * 1.15);
+            --pad-tab-y: clamp(0.625rem, 0.52rem + 0.06vw, 0.875rem);
+            --pad-tab-x: clamp(1rem,     0.85rem + 0.10vw, 1.5rem);
+            --gap-grid:  clamp(1rem,     0.80rem + 0.13vw, 2rem);
+            --gap-soft:  clamp(0.625rem, 0.52rem + 0.07vw, 1.125rem);
+            --gap-micro: clamp(0.375rem, 0.31rem + 0.04vw, 0.625rem);
+            --radius:    clamp(1rem, 0.90rem + 0.30vw, 1.40rem);
+            --radius-sm: calc(var(--radius) - 0.30rem);
+            --radius-xs: calc(var(--radius) - 0.55rem);
+            --border-w:  clamp(1px, 0.6px + 0.10vw, 3px);
+
+            --shell:     100%;
+            --shell-max: 1600px;
+            --tap-min:   44px;
+        }
+
+        /* Scale the whole layout up on large / TV displays.
+           rem-based tokens above follow automatically. */
+        @media (min-width: 1600px) { :root { font-size: 17px; --shell-max: 1760px; } }
+        @media (min-width: 2000px) { :root { font-size: 19px; --shell-max: 2100px; } }
+        @media (min-width: 2800px) { :root { font-size: 22px; --shell-max: 2900px; } }
+        @media (min-width: 3600px) { :root { font-size: 25px; --shell-max: 3700px; } }
+
+        /* ---- semantic type helpers (keep colour utilities intact) ---- */
+        .fs-badge { font-size: var(--fs-badge); }
+        .fs-meta  { font-size: var(--fs-meta); }
+        .fs-subj  { font-size: var(--fs-subj); }
+        .fs-day   { font-size: var(--fs-day); }
+        .fs-title { font-size: var(--fs-title); }
+
+        /* ---- layout shell ---- */
+        .shell {
+            width: 100%;
+            max-width: var(--shell-max);
+            margin-inline: auto;
+            padding-inline: max(var(--pad-x), env(safe-area-inset-left), env(safe-area-inset-right));
+        }
+        main.shell { padding-block: var(--pad-y); }
+
+        header .shell {
+            padding-block: clamp(0.75rem, 0.55rem + 0.6vw, 1.75rem);
+            padding-left:  max(var(--pad-x), env(safe-area-inset-left));
+            padding-right: max(var(--pad-x), env(safe-area-inset-right));
+        }
+        footer.shell {
+            padding-block: clamp(1rem, 0.7rem + 0.9vw, 2.25rem);
+            padding-bottom: max(clamp(1rem, 0.7rem + 0.9vw, 2.25rem), env(safe-area-inset-bottom));
+        }
+
+        html, body { min-height: 100%; }
+        body { min-height: 100dvh; overflow-x: hidden; }
+
+        /* ---- day tabs ----
+           The tabs stick right under the header so switching days never
+           requires scrolling back to the top of a long week. The wrapper
+           carries a solid page-coloured band, so cards scroll underneath it
+           instead of showing through the gap below the pills. */
+        :root { --page-bg: #eef1f6; }
+        [data-theme="light"] { --page-bg: #eef1f6; }
+        [data-theme="dark"]  { --page-bg: #000000; }
+
+        .days-tabs-sticky {
+            position: sticky;
+            top: var(--header-h, 0px);
+            z-index: 40;
+            background: var(--page-bg);
+            padding-top: 0.25rem;
+            padding-bottom: 0.55rem;
+            margin-bottom: calc(var(--gap-grid) - 0.55rem);
+        }
+        #days-tabs {
+            padding: var(--gap-micro);
+            padding-bottom: calc(var(--gap-micro) + 0.25rem);
+            gap: var(--gap-micro);
+            margin-bottom: 0;
+            border-radius: var(--radius);
+            scroll-padding-inline: var(--pad-x);
+            -webkit-overflow-scrolling: touch;
+        }
+        /* a dot on the tab that means "today", so the day is findable
+           even after the user has switched to another one */
+        .tab-today-dot {
+            width: 0.42em;
+            height: 0.42em;
+            border-radius: 999px;
+            background: currentColor;
+            flex: 0 0 auto;
+            margin-right: 0.5em;
+            opacity: .9;
+        }
+        .day-tab {
+            padding-block: var(--pad-tab-y);
+            padding-inline: var(--pad-tab-x);
+            border-radius: 999px;
+            border: 1px solid rgb(148 163 184 / 0.28);
+            font-size: var(--fs-meta);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* ---- schedule grid ---- */
+        #schedule-container {
+            display: grid;
+            gap: var(--gap-grid);
+            grid-template-columns: 1fr;
+            /* cards keep their natural height instead of being stretched to the
+               tallest day in the same row */
+            align-items: start;
+        }
+        #schedule-container > div { min-width: 0; }
+        /* 6 day cards, so only balanced column counts: 1 / 2 / 3 / 6.
+           4 or 5 would leave a ragged 4+2 / 5+1 second row. */
+        @media (min-width: 700px)  { #schedule-container { grid-template-columns: repeat(2, 1fr); } }
+        @media (min-width: 1200px) { #schedule-container { grid-template-columns: repeat(3, 1fr); } }
+        @media (min-width: 2400px) { #schedule-container { grid-template-columns: repeat(6, 1fr); } }
+
+        /* subject is the hero line: sized to carry the card width */
+        .lesson-card h4 {
+            font-size: clamp(1.05rem, 0.90rem + 0.55vw, 1.70rem);
+            margin-block: 0.12em 0.30em;
+        }
+
+        /* ---- lesson cards: fixed 3-row structure so every card
+               has the same rhythm regardless of content length ---- */
+        .day-card   { padding: var(--pad-day); border-radius: var(--radius); display: flex; flex-direction: column; }
+        .lesson-card{
+            padding: var(--pad-card);
+            border-radius: var(--radius-sm);
+            border-left-width: var(--border-w);
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: var(--gap-micro);
+            overflow-wrap: break-word;
+        }
+        .lesson-head{
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: var(--gap-micro);
+            justify-content: space-between;
+        }
+        .live-tag { letter-spacing: 0.02em; }
+        /* ---- minimal lesson card: no nested boxes, hierarchy from space/weight ---- */
+        .lesson-num {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 0.5em;
+            font-weight: 800;
+            opacity: .62;
+        }
+        .lesson-num .num-time { font-weight: 700; opacity: .85; }
+        .lesson-num.is-active { opacity: 1; color: #a855f7; }
+        .sub-tag {
+            font-weight: 800;
+            opacity: .45;
+            letter-spacing: 0.04em;
+        }
+        /* substituted lesson (замена) - amber reads on both light and dark */
+        .sub-flag {
+            font-weight: 800;
+            letter-spacing: 0.05em;
+            color: #f59e0b;
+            opacity: .95;
+            margin-left: auto;
+        }
+        /* number+time anchor left, any flag hugs the right edge */
+        .lesson-head > .lesson-num { margin-right: auto; }
+        .meta-item { opacity: .68; font-weight: 600; }
+        /* room sits at the far right so the row spans the card instead of
+           leaving a dead gap - same job the old bordered chips did */
+        .meta-item.is-room {
+            opacity: .75;
+            font-weight: 700;
+            padding: 0.3em 0.6em 0.18em;
+            margin-left: auto;
+            border: 1px solid rgb(148 163 184 / 0.35);
+        }
+        .meta-item.is-room:hover { opacity: 1; }
+
+        /* ---- brand wordmark: НКСЭ, одна акцентная буква ---- */
+        .brand-word {
+            display: inline-flex;
+            align-items: baseline;
+            font-weight: 900;
+            letter-spacing: -.035em;
+            font-size: clamp(1.4rem, 1.1rem + .9vw, 2rem);
+            line-height: 1;
+            white-space: nowrap;
+            user-select: none;
+            color: currentColor;
+        }
+        .brand-word .accent { color: #a855f7; }
+        /* 3D: three hard steps up-right + one soft cast shadow. Static text-shadow is
+           painted once and cached, it causes no layout/paint per frame - the
+           cost is negligible, and 3 steps is enough to read as solid. */
+        [data-theme="light"] .brand-word {
+            text-shadow:
+                2px 2px 0 rgba(148, 163, 184, .95),
+                3px 3px 0 rgba(71, 85, 105, .9),
+                4px 6px 8px rgba(15, 23, 42, .3);
+        }
+        [data-theme="light"] .brand-word .accent {
+            text-shadow:
+                2px 2px 0 #c084fc,
+                3px 3px 0 #7c3aed,
+                4px 6px 8px rgba(124, 58, 237, .4);
+        }
+        [data-theme="dark"] .brand-word {
+            text-shadow:
+                2px 2px 0 #334155,
+                3px 3px 0 #1e293b,
+                4px 7px 9px rgba(0, 0, 0, .9);
+        }
+        [data-theme="dark"] .brand-word .accent {
+            text-shadow:
+                2px 2px 0 #7c3aed,
+                3px 3px 0 #5b21b6,
+                4px 7px 9px rgba(168, 85, 247, .45);
+        }
+
+        /* ---- header: one consistent control language ---- */
+        .header-controls { gap: 0.5rem; }
+        /* On a phone the group picker gets its own row, so the title never has
+           to shrink to "Расп…" and the theme button is not left alone on a
+           third row. */
+        @media (max-width: 639px) {
+            .header-main {
+                flex-wrap: wrap;
+                gap: 0.7rem 0.75rem;
+            }
+            .header-brand { flex: 1 1 auto; }
+            .header-controls { flex: 1 1 100%; }
+            .header-controls .group-picker { flex: 1 1 auto; min-width: 0; }
+            .header-controls .group-trigger {
+                width: 100%;
+                max-width: none;
+                justify-content: space-between;
+            }
+        }
+        .header-select {
+            padding: 0.5rem 0.9rem;
+            font-size: var(--fs-meta);
+            color: inherit;
+            border: 1px solid rgb(148 163 184 / 0.35);
+            border-radius: 999px;
+        }
+        .header-select:hover { border-color: rgb(148 163 184 / 0.6); }
+        .header-select option { color: #0f172a; background: #fff; }
+        [data-theme="dark"] .header-select option { color: #e2e8f0; background: #0f172a; }
+        .header-icon-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.35rem;
+            height: 2.35rem;
+            padding: 0;
+            border-radius: 999px;
+            border: 1px solid rgb(148 163 184 / 0.35);
+            background: transparent;
+            color: inherit;
+            opacity: .7;
+            cursor: pointer;
+            transition: opacity .2s ease, background-color .2s ease, border-color .2s ease;
+        }
+        .header-icon-btn:hover { opacity: 1; background: rgb(148 163 184 / 0.12); }
+        .header-icon-btn svg { display: block; }
+        /* pinned state reads instantly, no text label needed */
+        .header-icon-btn.is-on {
+            opacity: 1;
+            color: #a855f7;
+            border-color: rgb(168 85 247 / 0.55);
+            background: rgb(168 85 247 / 0.12);
+        }
+        /* keep the subtitle from shouting */
+        #last-updated { opacity: .65; font-weight: 500; }
+
+        /* Day header: the title always gets a full line, the meta line below
+           holds the count and the actions. Same height on every card, and the
+           day name is never truncated - even with a "Послезавтра" badge. */
+        .day-head {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .day-head h3 { min-width: 0; flex-wrap: wrap; }
+        .day-name { overflow-wrap: anywhere; }
+        .day-owner {
+            font-size: 0.78em;
+            font-weight: 700;
+            opacity: .55;
+            overflow-wrap: anywhere;
+        }
+        .day-meta {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+        }
+        .day-actions { margin-left: auto; }
+        .day-actions > * { flex-shrink: 0; }
+        .day-actions .sub-flag { margin-left: 0; }
+        /* Icon-only buttons keep the row short enough to never wrap,
+           whatever the day name / substitution count. */
+        .day-icon-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.15em;
+            height: 2.15em;
+            padding: 0;
+            border-radius: 999px;
+            border: 1px solid rgb(148 163 184 / 0.35);
+            background: transparent;
+            color: inherit;
+            cursor: pointer;
+            opacity: .6;
+        }
+        .day-icon-btn:hover { opacity: 1; background: rgb(148 163 184 / 0.12); }
+        .day-icon-btn.day-share { border-color: rgb(168 85 247 / 0.5); background: rgb(168 85 247 / 0.10); color: #a855f7; }
+        .day-icon-btn.day-share:hover { background: rgb(168 85 247 / 0.18); }
+        /* feedback for the icon-only buttons (no label to swap) */
+        .day-icon-btn.is-busy { opacity: .35; pointer-events: none; }
+        .day-icon-btn.is-busy svg { animation: rotate360 1s linear infinite; }
+        .day-icon-btn.is-ok {
+            color: #10b981;
+            border-color: rgb(16 185 129 / 0.6);
+            background: rgb(16 185 129 / 0.14);
+            opacity: 1;
+        }
+        .day-icon-btn svg { display: block; }
+        .day-actions { gap: 0.4rem; }
+
+        .day-card.exporting { content-visibility: visible !important; }
+        /* Offscreen day cards skip layout/paint until scrolled near. With 6 day
+           cards x ~6 lessons this removes most of the initial rendering cost,
+           and `auto` makes the browser reuse the last real size so the scroll
+           position does not jump. */
+        .day-card {
+            content-visibility: auto;
+            contain-intrinsic-size: auto 480px;
+        }
+
+        /* ---- group picker: replaces the native select, which stutters with 150
+           options and cannot be animated at all ---- */
+        .group-picker { position: relative; flex-shrink: 0; }
+        .group-trigger {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 700;
+            cursor: pointer;
+            max-width: min(52vw, 16rem);
+            transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+        }
+        .group-trigger #group-trigger-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .group-chevron {
+            flex-shrink: 0;
+            transition: transform .22s cubic-bezier(.2, .7, .3, 1);
+        }
+        .group-picker.is-open .group-chevron { transform: rotate(180deg); }
+
+        .group-panel {
+            position: absolute;
+            top: calc(100% + 0.4rem);
+            right: 0;
+            z-index: 60;
+            width: max(15rem, 100%);
+            padding: 0.4rem;
+            border-radius: var(--radius-sm);
+            background: #ffffff;
+            border: 1px solid rgba(100, 116, 139, 0.28);
+            box-shadow: 0 18px 44px -16px rgba(15, 23, 42, 0.35);
+            /* closed state: no display:none, otherwise nothing can transition */
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translateY(-0.5rem) scale(.97);
+            transform-origin: top right;
+            transition:
+                opacity .16s ease,
+                transform .2s cubic-bezier(.2, .7, .3, 1),
+                visibility .16s;
+        }
+        .group-picker.is-open .group-panel {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+            transform: translateY(0) scale(1);
+        }
+        [data-theme="dark"] .group-panel {
+            background: #0b0f19;
+            border-color: rgba(255, 255, 255, 0.16);
+            box-shadow: 0 18px 44px -16px rgba(0, 0, 0, 0.9);
+        }
+        .group-filter {
+            width: 100%;
+            padding: 0.5rem 0.7rem;
+            font: inherit;
+            font-size: var(--fs-meta);
+            font-weight: 700;
+            color: inherit;
+            background: rgba(148, 163, 184, 0.14);
+            border: 1px solid transparent;
+            border-radius: calc(var(--radius-sm) - 0.2rem);
+            outline: none;
+            transition: border-color .16s ease, background-color .16s ease;
+        }
+        .group-filter:focus { border-color: rgba(100, 116, 139, 0.55); background: #ffffff; }
+        [data-theme="dark"] .group-filter:focus { background: #000000; }
+        .group-list {
+            margin-top: 0.35rem;
+            max-height: min(58vh, 26rem);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            /* momentum scrolling on touch, smooth for the programmatic jump */
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+        }
+        .group-opt {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            width: 100%;
+            padding: 0.45rem 0.6rem;
+            font-size: var(--fs-meta);
+            font-weight: 700;
+            text-align: left;
+            color: inherit;
+            background: transparent;
+            border: 0;
+            border-radius: calc(var(--radius-sm) - 0.25rem);
+            cursor: pointer;
+            transition: background-color .12s ease;
+        }
+        .group-opt:hover,
+        .group-opt.is-cursor { background: rgba(148, 163, 184, 0.18); }
+        .group-opt[aria-selected="true"] {
+            background: rgba(37, 99, 235, 0.12);
+            color: #2563eb;
+        }
+        [data-theme="dark"] .group-opt[aria-selected="true"] {
+            background: rgba(168, 85, 247, 0.18);
+            color: #c084fc;
+        }
+        .group-opt .g-emoji { flex-shrink: 0; }
+        /* On phones the picker is narrow (three header icons sit next to it),
+           so a right-aligned 15rem panel used to hang off the left edge.
+           Anchor it to the picker's left and cap it to the viewport. */
+        @media (max-width: 639px) {
+            .group-panel {
+                left: 0;
+                right: auto;
+                width: min(20rem, calc(100vw - 2 * var(--pad-x)));
+                max-width: calc(100vw - 2 * var(--pad-x));
+                max-height: calc(100dvh - var(--header-h, 70px) - 1rem);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                transform-origin: top left;
+            }
+            .group-panel .picker-modes,
+            .group-panel .group-filter { flex: 0 0 auto; }
+            .group-panel .group-list {
+                flex: 1 1 auto;
+                min-height: 0;
+                max-height: none;
+            }
+        }
+        .group-opt .opt-name {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .group-opt .opt-count {
+            margin-left: auto;
+            opacity: .45;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* ---- picker: groups / teachers ---- */
+        .picker-modes {
+            display: flex;
+            gap: 0.2rem;
+            padding: 0.2rem;
+            margin-bottom: 0.3rem;
+            border-radius: calc(var(--radius-sm) - 0.25rem);
+            background: rgba(148, 163, 184, 0.16);
+        }
+        .picker-mode {
+            flex: 1 1 auto;
+            padding: 0.45rem 0.4rem;
+            font: inherit;
+            font-size: var(--fs-badge);
+            font-weight: 800;
+            color: inherit;
+            background: transparent;
+            border: 0;
+            border-radius: calc(var(--radius-sm) - 0.4rem);
+            cursor: pointer;
+            opacity: .58;
+            transition: background-color .16s ease, opacity .16s ease, color .16s ease;
+        }
+        .picker-mode:hover { opacity: 1; }
+        .picker-mode.is-active {
+            opacity: 1;
+            background: #ffffff;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, .12);
+        }
+        [data-theme="dark"] #group-panel .picker-mode {
+            background: transparent !important;
+            border: 0 !important;
+            color: #ffffff !important;
+            opacity: .55;
+        }
+        [data-theme="dark"] #group-panel .picker-mode.is-active {
+            background: rgba(168, 85, 247, 0.20) !important;
+            border: 1px solid rgba(168, 85, 247, 0.55) !important;
+            color: #c084fc !important;
+            opacity: 1;
+        }
+
+        /* group chips on a teacher's lesson card */
+        .teacher-group-link {
+            font: inherit;
+            font-size: var(--fs-meta);
+            font-weight: 700;
+            color: inherit;
+            opacity: .72;
+            background: none;
+            border: 0;
+            padding: 0;
+            cursor: pointer;
+            white-space: nowrap;
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-underline-offset: .22em;
+        }
+        .teacher-group-link:hover { opacity: 1; text-decoration-style: solid; }
+        .teacher-group {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 0.25em;
+            white-space: nowrap;
+        }
+        .group-sub {
+            color: #f59e0b;
+            font-weight: 800;
+            font-size: 0.9em;
+        }
+        .group-room {
+            opacity: .55;
+            font-weight: 600;
+            font-size: 0.92em;
+            white-space: nowrap;
+        }
+        [data-theme="dark"] #schedule-container .teacher-group-link {
+            background: transparent !important;
+            border: 0 !important;
+            color: #ffffff !important;
+        }
+
+        /* teacher names on a group's lesson card are links to that teacher */
+        .teacher-links { display: inline; }
+        .teacher-link {
+            font: inherit;
+            font-weight: inherit;
+            color: inherit;
+            opacity: .75;
+            background: none;
+            border: 0;
+            padding: 0;
+            cursor: pointer;
+            text-align: left;
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-underline-offset: .22em;
+        }
+        .teacher-link:hover { opacity: 1; text-decoration-style: solid; }
+        [data-theme="dark"] #schedule-container .teacher-link {
+            background: transparent !important;
+            border: 0 !important;
+            color: #ffffff !important;
+        }
+
+        /* ---- click ripple on the day tabs ----
+           origin is the pointer position, transform+opacity only, so it stays on
+           the compositor and never triggers layout */
+        .day-tab {
+            position: relative;
+            overflow: hidden;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .day-tab:focus-visible { outline-offset: -3px; }
+        .day-ripple {
+            position: absolute;
+            border-radius: 50%;
+            pointer-events: none;
+            background: currentColor;
+            opacity: .28;
+            transform: translate(-50%, -50%) scale(0);
+            animation: ripple-out .58s cubic-bezier(.22, .61, .36, 1) forwards;
+        }
+        @keyframes ripple-out {
+            to { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+        }
+
+        /* ---- day header: pill chips ---- */
+        .day-count {
+            opacity: .55;
+            font-weight: 700;
+            padding: 0.32em 0.8em 0.2em;
+            border: 1px solid rgb(148 163 184 / 0.35);
+        }
+        .day-copy {
+            padding: 0.32em 0.85em 0.2em;
+            font-weight: 700;
+            opacity: .6;
+            background: transparent;
+            border: 1px solid rgb(148 163 184 / 0.35);
+            cursor: pointer;
+            color: inherit;
+        }
+        .day-copy:hover { background: rgb(148 163 184 / 0.10); opacity: .95; }
+        .day-share {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.3rem;
+            padding: 0.32em 0.8em 0.2em;
+            border: 1px solid rgb(168 85 247 / 0.5);
+            background: rgb(168 85 247 / 0.10);
+            color: #a855f7;
+            cursor: pointer;
+            font-size: var(--fs-badge, 12px);
+            font-weight: 800;
+        }
+        .day-share:hover { background: rgb(168 85 247 / 0.18); }
+
+        /* symmetric padding, truly centred ink (Chrome 133+ / Safari 18.4+) */
+        @supports (text-box: trim-both cap alphabetic) {
+            .chip, .chip-sm,
+            .day-count, .day-icon-btn, .day-share, .meta-item.is-room {
+                text-box: trim-both cap alphabetic;
+                padding-top: 0.3em;
+                padding-bottom: 0.3em;
+            }
+            .day-icon-btn { padding: 0; }
+        }
+
+        /* ---- quick access to pinned groups ---- */
+        .quick-bar{
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: var(--gap-micro);
+            margin-bottom: var(--gap-soft);
+        }
+        .quick-bar:empty { display: none; }
+
+        /* ---- staleness indicator ---- */
+        .stale-dot{
+            flex: 0 0 auto;
+            width: .6em; height: .6em;
+            border-radius: 999px;
+            background: #f59e0b;
+            align-self: center;
+        }
+        .stale-dot[hidden] { display: none; }
+        @media (prefers-reduced-motion: no-preference) {
+            .stale-dot { animation: staleBlink 2.4s ease-in-out infinite; }
+            @keyframes staleBlink {
+                0%, 100% { opacity: 1; }
+                50% { opacity: .3; }
+            }
+        }
+
+        /* ---- "what's happening now" bar ---- */
+        .now-bar{
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: var(--gap-micro) var(--gap-soft);
+            font-size: var(--fs-meta);
+            padding: var(--gap-micro) var(--gap-soft);
+            margin-bottom: var(--gap-soft);
+            border-radius: 999px;
+            border: 1px solid rgb(148 163 184 / 0.45);
+        }
+        .now-bar[hidden] { display: none; }
+        .now-bar .now-dot{
+            width: .55em; height: .55em; border-radius: 999px;
+            background: #a855f7; flex: 0 0 auto;
+            animation: nowPulse 1.8s ease-in-out infinite;
+        }
+        .now-bar.is-live { border-color: #a855f7; }
+        .now-bar.is-free .now-dot { background: #64748b; animation: none; }
+        .now-bar b { font-weight: 800; }
+        .now-bar .now-left { opacity: .7; }
+        @keyframes nowPulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: .35; transform: scale(.75); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .now-bar .now-dot { animation: none; }
+        }
+
+        .quick-btn{
+            font-size: var(--fs-meta);
+            font-weight: 700;
+            padding: calc(var(--gap-micro) * 0.9) var(--gap-soft);
+            border-radius: 999px;
+            border: 1px solid rgb(148 163 184 / 0.5);
+            background: transparent;
+            color: inherit;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background-color .2s ease, border-color .2s ease, color .2s ease;
+        }
+        .quick-btn:hover { background: rgb(148 163 184 / 0.12); }
+        .quick-btn.quick-back {
+            border-color: rgb(168 85 247 / 0.55);
+            color: #a855f7;
+        }
+        .quick-btn.quick-back:hover { background: rgb(168 85 247 / 0.12); }
+        [data-theme="dark"] #quick-groups .quick-btn.quick-back {
+            color: #c084fc !important;
+            border-color: rgb(168 85 247 / 0.6) !important;
+            background: rgb(168 85 247 / 0.12) !important;
+        }
+        .quick-btn[aria-current="true"] {
+            border-color: #a855f7;
+            color: #a855f7;
+        }
+        .pin-btn{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: var(--fs-meta);
+            padding: calc(var(--gap-micro) * 0.9) var(--gap-soft);
+            border-radius: 999px;
+            border: 1px solid rgb(148 163 184 / 0.5);
+            background: transparent;
+            color: inherit;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background-color .2s ease, border-color .2s ease, color .2s ease, opacity .2s ease;
+        }
+        .pin-btn:hover { background: rgb(148 163 184 / 0.12); }
+        .pin-btn[aria-pressed="true"] { border-color: #a855f7; color: #a855f7; }
+        .pin-btn:disabled { opacity: .4; cursor: default; }
+
+        /* ---- search ---- */
+        .search-wrap{
+            display: flex;
+            align-items: center;
+            gap: var(--gap-micro);
+            margin-bottom: var(--gap-soft);
+            flex-wrap: wrap;
+        }
+        .search-input{
+            flex: 1 1 16rem;
+            font-size: var(--fs-meta);
+            padding: calc(var(--gap-micro) * 1.4) var(--gap-soft);
+            border-radius: 999px;
+            border: 1px solid rgb(148 163 184 / 0.5);
+            background: transparent;
+            color: inherit;
+            min-width: 0;
+        }
+        .search-input:focus { outline: none; border-color: #a855f7; }
+        .search-reset{
+            border: none;
+            background: transparent;
+            color: inherit;
+            cursor: pointer;
+            font-size: var(--fs-meta);
+            padding: calc(var(--gap-micro) * 1.4) var(--gap-soft);
+            border-radius: 999px;
+            opacity: .6;
+        }
+        .search-reset:hover { opacity: 1; }
+        .search-results{
+            display: flex;
+            flex-direction: column;
+            gap: var(--gap-micro);
+            margin-bottom: var(--gap-soft);
+        }
+        /* A broad query ("Химия") matches hundreds of lessons. Left to grow,
+           the list pushed the day tabs and the schedule thousands of pixels
+           down; cap it and let the results scroll on their own. */
+        #search-results:not([hidden]) {
+            max-height: min(58vh, 30rem);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding-right: 0.15rem;
+            scrollbar-width: thin;
+        }
+        .search-hit{
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: var(--gap-micro) var(--gap-soft);
+            font-size: var(--fs-meta);
+            padding: var(--gap-micro) var(--gap-soft);
+            border-radius: calc(var(--radius) - 0.4rem);
+            border: 1px solid rgb(148 163 184 / 0.4);
+        }
+        .search-hit b { font-weight: 800; }
+        .search-hit .muted { opacity: .65; }
+        /* wrapping row: chips keep their natural width, never stretch */
+        .lesson-meta{
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: var(--gap-micro) var(--gap-soft);
+        }
+        .lesson-meta-row{
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: var(--gap-micro);
+            flex: 1 0 100%;
+        }
+        /* every group with its own room gets its own line, even when both
+           would fit side by side on a wide card */
+        .lesson-meta-row.is-multi-group {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.3rem;
+        }
+        /* ---- vertical centring inside pills ----
+           With line-height:1 the line box is 1em tall but the baseline sits at
+           ~0.8em and cap-height is only ~0.72em, so the ink lands ~0.06em
+           ABOVE the box centre -> equal padding looks like "more room below".
+           Modern fix: text-box trimming cuts the line box to cap-height /
+           alphabetic baseline, which makes symmetric padding truly symmetric.
+           Fallback for engines without text-box: shave 0.12em off the bottom. */
+        .chip, .chip-sm,
+        .day-count, .day-icon-btn, .day-share, .meta-item.is-room {
+            line-height: 1;
+            border-radius: 999px;
+            border-width: 1px;
+            box-sizing: border-box;
+        }
+        .chip, .chip-sm, .day-count, .day-icon-btn, .day-share {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .chip       { padding: 0.32em 0.85em 0.2em; }
+        .chip-sm    { padding: 0.3em 0.8em 0.18em; }
+        .stack      { display: flex; flex-direction: column; gap: var(--gap-soft); }
+        .row-wrap   { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-micro); }
+
+        /* lessons inside one day share a row so cards line up evenly */
+        #schedule-container .stack { flex: 1 1 auto; }
+        #schedule-container .stack > .lesson-card { flex: 0 0 auto; }
+
+        /* room button needs a real touch target even though padding is tight */
+        .room-btn   { display: inline-flex; align-items: center; justify-content: center; }
+
+        /* enlarge tap targets only on actual touch devices */
+        @media (pointer: coarse) {
+            .day-tab,
+            .room-btn,
+            #theme-toggle,
+            #group-select { min-height: var(--tap-min); }
+            .room-btn, #theme-toggle { min-width: var(--tap-min); }
+        }
+
+        /* empty / loading states */
+        .state-box  { padding: calc(var(--pad-card) * 2.5); border-radius: var(--radius); }
+
+        /* ---- hover effects only where a real pointer exists ---- */
+        @media (hover: none) {
+            .schedule-card:hover { transform: none !important; }
+        }
+
+        /* ---- keyboard / remote focus ---- */
+        :focus-visible {
+            outline: 3px solid #a855f7;
+            outline-offset: 2px;
+            border-radius: calc(var(--radius) - 0.3rem);
+        }
+
+        /* ---- phone landscape: vertical space is scarce ---- */
+        @media (max-height: 520px) and (orientation: landscape) {
+            :root { --pad-y: clamp(0.75rem, 0.5rem + 1vw, 1.5rem); }
+            #days-tabs { margin-bottom: var(--gap-soft); }
+        }
+
+        /* ---- accessibility ----
+           Reduced motion shortens and softens the entrance but KEEPS the
+           top-to-bottom travel, because removing the movement entirely made
+           cards look like they were simply blinking in. */
+        @media (prefers-reduced-motion: reduce) {
+            .schedule-card {
+                animation: fadeInUpSoft 0.42s ease-out backwards !important;
+            }
+            @keyframes fadeInUpSoft {
+                0%   { opacity: 0; transform: translateY(12px); }
+                100% { opacity: 1; transform: translateY(0); }
+            }
+            .schedule-card,
+            .day-tab,
+            .quick-btn,
+            .pin-btn,
+            .search-input {
+                transition: none !important;
+            }
+            .now-bar .now-dot { animation: none !important; }
+        }
+        /* ---- lesson card colours driven by data-theme (no JS re-render needed) ----
+           The dark theme reads through bright borders on black, so it works
+           with flat fills. On a light page the same flat white cards on #f1f5f9
+           smear together - there the depth has to come from shadows and a
+           slightly stronger outline instead. */
+        [data-theme="light"] body { background: #eef1f6; }
+        [data-theme="light"] .lesson-card {
+            background: #fdfdfe;
+            border-color: #dbe3ee;
+            color: #1e293b;
+            box-shadow:
+                0 1px 1px rgba(15, 23, 42, 0.04),
+                0 2px 6px -2px rgba(15, 23, 42, 0.07);
+        }
+        [data-theme="light"] .lesson-card:hover {
+            background: #ffffff;
+            border-color: #c7d2e2;
+            box-shadow:
+                0 1px 2px rgba(15, 23, 42, 0.05),
+                0 6px 16px -6px rgba(15, 23, 42, 0.14);
+        }
+        [data-theme="dark"] .lesson-card {
+            background: #000000;
+            border-color: rgba(255, 255, 255, 0.7);
+            color: #ffffff;
+        }
+        [data-theme="dark"] .lesson-card:hover { background: #000000; }
+        .lesson-card-current { border-left-color: #2563eb !important; box-shadow: none; }
+        .lesson-card-passed  { border-left-color: #cbd5e1 !important; }
+        [data-theme="dark"] .lesson-card-current { border-left-color: #ffffff !important; }
+        [data-theme="dark"] .lesson-card-passed  { border-left-color: rgba(255,255,255,0.4) !important; }
+
+        /* the lesson in progress gets real emphasis, not just a blue stripe */
+        [data-theme="light"] .lesson-card.lesson-card-current {
+            border-color: #93c5fd;
+            border-left-color: #2563eb !important;
+            background: #ffffff;
+            box-shadow:
+                0 0 0 1px rgba(37, 99, 235, 0.18),
+                0 4px 14px -4px rgba(37, 99, 235, 0.22);
+        }
+        [data-theme="light"] .lesson-card.lesson-card-passed { opacity: .62; }
+        [data-theme="dark"] .lesson-card.lesson-card-current {
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+        }
+
+        /* ---- light theme depth for the day cards, header and controls ---- */
+        [data-theme="light"] .day-card {
+            background: #ffffff;
+            border-color: #d7e0ec;
+            box-shadow:
+                0 1px 2px rgba(15, 23, 42, 0.04),
+                0 10px 28px -14px rgba(15, 23, 42, 0.18);
+        }
+        [data-theme="light"] header {
+            box-shadow: 0 1px 0 #e2e8f0, 0 6px 20px -12px rgba(15, 23, 42, 0.25);
+        }
+        /* pills need a fill as well as an outline to read on white.
+           :not([class*="bg-"]) keeps the coloured state pills
+           (Сегодня/Завтра/Послезавтра and замены) untouched. */
+        [data-theme="light"] :is(.chip, .chip-sm, .day-count, .day-icon-btn, .meta-item.is-room):not([class*="bg-"]) {
+            border-color: rgba(100, 116, 139, 0.42);
+            background: rgba(241, 245, 249, 0.9);
+        }
+        [data-theme="light"] .day-icon-btn:hover,
+        [data-theme="light"] .header-icon-btn:hover { background: rgba(226, 232, 240, 0.95); }
+        [data-theme="light"] .header-select {
+            background-color: #ffffff;
+            border-color: rgba(100, 116, 139, 0.42);
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+        }
+        [data-theme="light"] .search-hit {
+            background: #ffffff;
+            border-color: #e2e8f0;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+        [data-theme="light"] .quick-btn {
+            background: rgba(241, 245, 249, 0.9);
+            border-color: rgba(100, 116, 139, 0.35);
+        }
+        [data-theme="light"] .quick-btn:hover { background: #ffffff; border-color: rgba(100, 116, 139, 0.55); }
+        [data-theme="light"] .now-bar {
+            background: #ffffff;
+            border-color: #dbe3ee;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+        [data-theme="light"] #days-tabs {
+            background: #e8edf4;
+            border-color: #d7e0ec;
+            box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+        }
+        [data-theme="light"] .day-tab {
+            border-color: rgba(100, 116, 139, 0.3);
+            background: rgba(255, 255, 255, 0.6);
+        }
+        [data-theme="light"] .day-tab:not(.day-tab-active):hover { background: #ffffff; }
+        /* the active tab must keep its blue fill - the rule above is more
+           specific than Tailwind's .bg-blue-600 and used to win, leaving white
+           text on a white pill */
+        [data-theme="light"] .day-tab.day-tab-active {
+            background: #2563eb !important;
+            color: #ffffff !important;
+            border-color: #2563eb !important;
+            box-shadow: 0 2px 8px -2px rgba(37, 99, 235, 0.45);
+        }
+
+        /* forced state for exporting a day to image: no animation bleed, full size */
+        .exporting, .exporting * {
+            animation: none !important;
+            transition: none !important;
+            transform: none !important;
+            overflow: visible !important;
+            max-height: none !important;
+            height: auto !important;
+            min-height: 0 !important;
+            box-shadow: none !important;
+        }
+        .exporting { opacity: 1 !important; }
+
+        /* ---- print: strip chrome, keep the schedule readable on paper ---- */
+        @media print {
+            @page { margin: 12mm; }
+            html, body { background: #fff !important; color: #000 !important; }
+            [data-theme="dark"] body,
+            [data-theme="dark"] header,
+            [data-theme="dark"] footer,
+            [data-theme="dark"] .day-card,
+            [data-theme="dark"] .lesson-card,
+            [data-theme="dark"] #days-tabs,
+            [data-theme="dark"] #days-tabs button { background: #fff !important; color: #000 !important; }
+            [data-theme="dark"] .border-slate-200,
+            [data-theme="dark"] .border-slate-300,
+            [data-theme="dark"] .border-slate-700,
+            [data-theme="dark"] .border-slate-800,
+            [data-theme="dark"] .border { border-color: #999 !important; }
+            header, footer, #theme-toggle, #pin-btn, #quick-groups,
+            #search-wrap, #search-results, .no-scrollbar { display: none !important; }
+            main.shell { padding: 0 !important; max-width: none !important; }
+            #days-tabs { display: none !important; }
+            .days-tabs-sticky { display: none !important; }
+            #schedule-container { grid-template-columns: repeat(2, 1fr) !important; gap: 8mm !important; }
+            .day-card, .lesson-card { break-inside: avoid; page-break-inside: avoid; box-shadow: none !important; }
+            .schedule-card, .day-card { animation: none !important; opacity: 1 !important; }
+            .chip, .room-btn, .quick-btn { border-color: #999 !important; }
+        }
+    </style>
+    <link rel="stylesheet" href="theme.css">
+    <script src="theme.js"></script>
+</head>
+<body class="app-body bg-slate-100 dark:bg-darkbg text-slate-900 dark:text-slate-100 min-h-full flex flex-col transition-colors duration-200">
+    
+    <!-- Header -->
+    <header class="bg-white/90 dark:bg-cardbg/90 backdrop-blur-md border-b border-slate-200/85 dark:border-slate-800 sticky top-0 z-50 shadow-xs">
+        <div class="shell flex items-center gap-3">
+
+            <!-- Логотип, выбор группы и переключатель темы -->
+            <div class="header-main flex items-center gap-3.5 w-full min-w-0 sm:flex-1">
+                <div class="header-brand flex items-center gap-3 min-w-0">
+                    <span class="brand-word select-none shrink-0" aria-label="НКСЭ">НКС<span class="accent">Э</span></span>
+                    <div class="min-w-0">
+                        <h1 class="fs-title font-extrabold tracking-tight text-slate-900 dark:text-white truncate">Расписание</h1>
+                        <p class="fs-meta text-slate-500 dark:text-slate-400 font-medium truncate" id="last-updated">Загрузка...</p>
+                    </div>
+                </div>
+                <span id="stale-dot" class="stale-dot" hidden title="Данные могут быть неактуальны"></span>
+
+                <!-- Группа, закрепление и тема -->
+                <div class="relative flex items-center gap-2 header-controls ml-auto">
+                    <div class="group-picker" id="group-picker">
+                        <button type="button" id="group-trigger" class="header-select group-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Выбор группы или преподавателя">
+                            <span id="group-trigger-label">СЗ-13-26 ⭐</span>
+                            <svg class="group-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                        </button>
+                        <div class="group-panel" id="group-panel">
+                            <div class="picker-modes" role="tablist" aria-label="Что искать">
+                                <button type="button" class="picker-mode is-active" data-mode="group" role="tab" aria-selected="true">Группы</button>
+                                <button type="button" class="picker-mode" data-mode="teacher" role="tab" aria-selected="false">Преподаватели</button>
+                            </div>
+                            <input id="group-filter" class="group-filter" type="text" placeholder="Найти группу" autocomplete="off" spellcheck="false" aria-label="Фильтр групп">
+                            <div class="group-list" id="group-list" role="listbox" aria-label="Список групп"></div>
+                        </div>
+                    </div>
+                    <button id="pin-btn" class="pin-btn header-icon-btn" aria-pressed="false" aria-label="Закрепить группу" title="Закрепить группу в быстрый доступ"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z"/></svg></button>
+                    <!-- Переключатель темы (День / Ночь) -->
+                    <button id="theme-toggle" onclick="toggleTheme()" class="shrink-0 header-icon-btn" title="Переключить тему" aria-label="Переключить тему">
+                        <svg class="theme-icon theme-icon-sun w-[1.15em] h-[1.15em]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                        <svg class="theme-icon theme-icon-moon w-[1.15em] h-[1.15em]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+                    </button>
+                    <!-- Настройки -->
+                    <button id="settings-btn" type="button" class="shrink-0 header-icon-btn" title="Настройки" aria-label="Настройки" aria-haspopup="dialog" aria-controls="settings-panel" aria-expanded="false">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="shell flex-grow">
+
+        <!-- Что идёт прямо сейчас -->
+        <div id="now-bar" class="now-bar" hidden></div>
+
+        <!-- Быстрый доступ к закреплённым группам -->
+        <div class="quick-bar" id="quick-groups" aria-label="Закреплённые группы">
+            <!-- Dynamically populated -->
+        </div>
+
+        <!-- Поиск по всем группам -->
+        <div class="search-wrap" id="search-wrap">
+            <input id="search-input" class="search-input" type="search" autocomplete="off"
+                   placeholder="Поиск: преподаватель, кабинет, предмет…" aria-label="Поиск по расписанию">
+            <button id="search-reset" class="search-reset" hidden>Очистить</button>
+        </div>
+        <div id="search-results" hidden></div>
+
+        <!-- Segmented Control Tabs -->
+        <div class="days-tabs-sticky">
+            <div class="bg-slate-200/80 dark:bg-slate-900 flex overflow-x-auto no-scrollbar border border-slate-300/60 dark:border-slate-800 shadow-inner" id="days-tabs">
+                <!-- Dynamically populated -->
+            </div>
+        </div>
+
+        <!-- Schedule Grid -->
+        <div id="schedule-container">
+            <!-- Loading state -->
+            <div class="col-span-full state-box text-center text-slate-400">
+                <div class="inline-block animate-spin rounded-full border-3 border-blue-600 border-t-transparent mb-3" style="width: clamp(1.75rem, 1.2rem + 1.6vw, 3.5rem); height: clamp(1.75rem, 1.2rem + 1.6vw, 3.5rem);"></div>
+                <p class="fs-meta font-bold text-slate-600 dark:text-slate-300">Загружаем расписание...</p>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="shell border-t border-slate-200 dark:border-slate-800 text-center fs-meta text-slate-500 dark:text-slate-400 mt-auto bg-white dark:bg-cardbg">
+        <p class="font-bold tracking-wide">НКСЭ &bull; СИСТЕМА РАСПИСАНИЯ ЗАНЯТИЙ</p>
+        <p id="data-health" class="mt-1 opacity-60"></p>
+        <p class="mt-1 opacity-40"><button type="button" onclick="clearOfflineCache()" class="underline decoration-dotted hover:opacity-100" title="Сбросить офлайн-кэш и перезагрузить">Сбросить кэш</button></p>
+        <p id="akashi-tagline" class="footer-tagline" aria-hidden="true"><span id="discipline-word">DISCIPLINE</span> / CONTROL / POWER</p>
+    </footer>
+
+    <!-- Настройки: содержимое собирает settings.js -->
+    <div id="settings-panel" hidden></div>
+
+    <!-- App Logic -->
+<script src="app.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>
