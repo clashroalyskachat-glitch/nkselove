@@ -1,0 +1,52 @@
+name: Обновить сайт на Firebase
+
+on:
+  schedule:
+    # каждые 10 минут: забираем свежее расписание с GitHub Pages
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: firebase-live
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # автоматический коммит синхронизации не должен запускать второй прогон
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v4
+
+      - name: Подтянуть свежие файлы из GitHub Pages
+        run: bash scripts/sync.sh
+
+      - name: Закоммитить изменения
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "Изменений нет — деплоим как есть"
+          else
+            git add -A
+            git commit -m "Автосинхронизация с GitHub Pages [skip ci]"
+            git push || (git pull --rebase && git push)
+          fi
+
+      - name: Выложить на Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: nkselove
+          channelId: live
+          entryPoint: .
