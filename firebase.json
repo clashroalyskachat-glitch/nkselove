@@ -27,6 +27,33 @@
                 ]
             },
             {
+                "source": "/",
+                "headers": [
+                    {
+                        "key": "Cache-Control",
+                        "value": "public, max-age=300"
+                    }
+                ]
+            },
+            {
+                "source": "/mypars/",
+                "headers": [
+                    {
+                        "key": "Cache-Control",
+                        "value": "public, max-age=300"
+                    }
+                ]
+            },
+            {
+                "source": "/mypars/library/",
+                "headers": [
+                    {
+                        "key": "Cache-Control",
+                        "value": "public, max-age=300"
+                    }
+                ]
+            },
+            {
                 "source": "**/sw.js",
                 "headers": [
                     {
