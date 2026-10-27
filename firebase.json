@@ -54,6 +54,15 @@
                 ]
             },
             {
+                "source": "/mypars/wishes/",
+                "headers": [
+                    {
+                        "key": "Cache-Control",
+                        "value": "public, max-age=300"
+                    }
+                ]
+            },
+            {
                 "source": "**/*.css",
                 "headers": [
                     {
