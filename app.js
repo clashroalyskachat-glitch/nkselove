@@ -5,7 +5,15 @@
 (function () {
     'use strict';
 
-    var KEY = 'hub.theme';
+    /*
+     * Тема одна на все три страницы: меню, библиотека и доска пожеланий.
+     * Расписание сюда не входит — у него свои пресеты, и его мы не трогаем.
+     * Старый личный ключ читаем как запасной, чтобы переключение не
+     * сбрасывалось у тех, кто уже успел его сохранить.
+     */
+    var THEME_KEY = 'nkse-theme';
+    var THEME_LEGACY = 'hub.theme';
+
     var root = document.documentElement;
     var themeBtn = document.getElementById('theme-btn');
     var meta = document.querySelector('meta[name="theme-color"]');
@@ -15,15 +23,35 @@
         if (meta) meta.setAttribute('content', theme === 'dark' ? '#08080a' : '#e9e5dd');
     }
 
+    function readTheme() {
+        try {
+            var value = localStorage.getItem(THEME_KEY);
+            if (value !== 'dark' && value !== 'light') value = localStorage.getItem(THEME_LEGACY);
+            return value === 'light' ? 'light' : 'dark';
+        } catch (e) {
+            return root.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+        }
+    }
+
+    function writeTheme(theme) {
+        try {
+            localStorage.setItem(THEME_KEY, theme);
+            localStorage.setItem(THEME_LEGACY, theme);
+        } catch (e) { /* приватный режим - просто не запоминаем */ }
+    }
+
     if (themeBtn) {
         themeBtn.addEventListener('click', function () {
             var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
             paint(next);
-            try {
-                localStorage.setItem(KEY, next);
-            } catch (e) { /* приватный режим - просто не запоминаем */ }
+            writeTheme(next);
         });
     }
+
+    /* Другая открытая вкладка переключается сразу, без перезагрузки. */
+    window.addEventListener('storage', function (event) {
+        if (event.key === THEME_KEY || event.key === THEME_LEGACY) paint(readTheme());
+    });
 
     var today = document.getElementById('today');
     if (today) {

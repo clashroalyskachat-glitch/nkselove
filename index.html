@@ -11,14 +11,22 @@
 
     <script>
         /*
-         * Тема до первой отрисовки: по умолчанию тёмная,
-         * светлая включается только если её выбрали вручную.
+         * Тема до первой отрисовки. Она общая для меню, библиотеки и доски
+         * пожеланий ('nkse-theme'), по умолчанию тёмная. Старый ключ
+         * 'hub.theme' остаётся запасным и переносится в общий.
          */
         (function () {
             try {
-                if (localStorage.getItem('hub.theme') === 'light') {
-                    document.documentElement.setAttribute('data-theme', 'light');
-                }
+                var shared = localStorage.getItem('nkse-theme');
+                var value = shared || localStorage.getItem('hub.theme');
+                var light = value === 'light';
+
+                document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
+
+                var meta = document.querySelector('meta[name="theme-color"]');
+                if (meta) meta.setAttribute('content', light ? '#e9e5dd' : '#08080a');
+
+                if (!shared && value) localStorage.setItem('nkse-theme', value);
             } catch (e) { /* приватный режим - тёмная */ }
         })();
     </script>
@@ -189,6 +197,6 @@
 
 </main>
 
-<script src="app.js"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>
