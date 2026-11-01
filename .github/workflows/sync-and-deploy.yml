@@ -2,8 +2,8 @@ name: Обновить сайт на Firebase
 
 on:
   schedule:
-    # каждые 10 минут: забираем свежее расписание с GitHub Pages
-    - cron: '*/10 * * * *'
+    # каждые 5 минут: забираем свежее расписание с GitHub Pages
+    - cron: '*/5 * * * *'
   workflow_dispatch:
   push:
     branches:
