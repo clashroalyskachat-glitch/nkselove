@@ -30,19 +30,25 @@ jobs:
         run: bash scripts/sync.sh
 
       - name: Закоммитить изменения
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if git diff --quiet; then
-            echo "Изменений нет — деплоим как есть"
+            echo "Изменений нет"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             git add -A
             git commit -m "Автосинхронизация с GitHub Pages [skip ci]"
             git push || (git pull --rebase && git push)
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Выложить на Firebase Hosting
+        # При плановом прогоне выкладываем только когда файлы реально поменялись,
+        # иначе это 288 пустых деплоев в сутки.
+        if: github.event_name != 'schedule' || steps.commit.outputs.changed == 'true'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
