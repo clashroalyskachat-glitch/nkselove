@@ -4,6 +4,13 @@ let allGroupsData = {};
 let currentGroup = localStorage.getItem('selected_group') || 'СЗ-13-26';
 let currentDayFilter = 'all';
 let lastModTime = null;
+let _lastCheckAt = 0;
+
+/* L1 hot slice: только расписание текущей группы (~2-3 КБ). Читается синхронно
+ * до любого сетевого запроса, чтобы первый кадр был на экране за единицы мс.
+ * Версия схемы в ключе: при смене формата старый срез просто игнорируется. */
+const HOT_SLICE_KEY = 'nkse-hot-slice-v1';
+const HOT_SLICE_SCHEMA = 1;
 
 const PIN_KEY = 'nkse-pinned-groups';
 const TEACHER_PIN_KEY = 'nkse-pinned-teachers';
@@ -315,12 +322,21 @@ function runSearch(query) {
 // painted from localStorage. Without this the service worker has no data to
 // fall back on, and the first offline load after the localStorage copy went
 // stale shows the "ошибка загрузки" screen.
-function warmOfflineCache() {
+//
+// `rawText` is the payload loadSchedule already downloaded and parsed: reusing
+// it removes a second full download of the same file on every cold start.
+function warmOfflineCache(rawText) {
     if (!('caches' in window)) return;
     const url = 'schedule.json';
     caches.open(OFFLINE_DATA_CACHE).then((cache) =>
         cache.match(url).then((hit) => {
             if (hit) return null;
+            if (typeof rawText === 'string' && rawText.length) {
+                return cache.put(
+                    url,
+                    new Response(rawText, { headers: { 'Content-Type': 'application/json' } })
+                );
+            }
             return fetch(url, { cache: 'reload' }).then((res) => {
                 if (res && res.ok) return cache.put(url, res.clone());
                 return null;
@@ -681,10 +697,67 @@ function fetchScheduleVersion() {
     return _versionPromise;
 }
 
+/* ------------------- L1: горячий срез текущей группы ------------------- */
+
+function readHotSlice() {
+    try {
+        const raw = localStorage.getItem(HOT_SLICE_KEY);
+        if (!raw) return null;
+        const s = JSON.parse(raw);
+        if (!s || s.v !== HOT_SLICE_SCHEMA) return null;
+        if (typeof s.g !== 'string' || !s.d || typeof s.d !== 'object') return null;
+        return s;
+    } catch (e) {
+        return null;
+    }
+}
+
+function paintHotSlice() {
+    const slice = readHotSlice();
+    if (!slice) return false;
+    if (!allGroupsData || !Object.keys(allGroupsData).length || !allGroupsData[slice.g]) {
+        allGroupsData = { [slice.g]: slice.d };
+    }
+    if (!allGroupsData[currentGroup]) currentGroup = slice.g;
+    try {
+        populateGroupSelect();
+        renderQuickGroups();
+        renderPinButton();
+        renderTabs();
+        renderSchedule();
+        markStaleness(slice.t || null, true);
+        setUpdatedLabel(slice.t || null);
+    } catch (e) {
+        return false;
+    }
+    return true;
+}
+
+function saveHotSlice() {
+    try {
+        if (!currentGroup || !allGroupsData || !allGroupsData[currentGroup]) return;
+        localStorage.setItem(
+            HOT_SLICE_KEY,
+            JSON.stringify({
+                v: HOT_SLICE_SCHEMA,
+                g: currentGroup,
+                t: lastModTime || 0,
+                d: allGroupsData[currentGroup],
+            })
+        );
+    } catch (e) {
+        /* приватный режим или переполнение квоты: работаем без среза */
+    }
+}
+
  async function loadSchedule(forceRefresh = false) {
      const container = document.getElementById('schedule-container');
      const lastUpdatedEl = document.getElementById('last-updated');
-     
+
+     // L1: мгновенный кадр из среза текущей группы. Синхронно и до первого
+     // await — иначе старт снова упрётся в сеть.
+     if (!forceRefresh) paintHotSlice();
+
      const CACHE_KEY = 'nkse-schedule-cache';
      const TIME_KEY = 'nkse-schedule-time';
      const CACHE_VER_KEY = 'nkse-cache-ver';
@@ -720,7 +793,7 @@ const cachedFileMtime = localStorage.getItem('nkse-file-mtime');
 renderTabs();
                  renderSchedule();
                  checkForUpdates();
-                 warmOfflineCache();
+                 warmOfflineCache(cached);
                  return;
              }
          } catch (e) {
@@ -772,7 +845,8 @@ const res = await fetch(forceRefresh ? `schedule.json?_t=${Date.now()}` : 'sched
 renderTabs();
          renderSchedule();
          checkForUpdates();
-         warmOfflineCache();
+         warmOfflineCache(rawText);
+         saveHotSlice();
 } catch (err) {
          console.error(err);
          uiSound('error');
@@ -1082,6 +1156,7 @@ function selectGroup(group) {
     renderPinButton();
     renderQuickGroups();
     renderSchedule();
+    saveHotSlice();
     updateViewUrl();
     scrollToScheduleTop();
     uiSound('tap');
@@ -1972,17 +2047,65 @@ function renderSchedule() {
     }
 }
 
-function checkForUpdates() {
+function checkForUpdates(once) {
+    _lastCheckAt = performance.now();
     fetchScheduleVersion()
         .then((data) => {
-            if (!data) return;
-            if (data.mod_time && lastModTime && data.mod_time !== lastModTime) {
+            if (!data || !data.mod_time) return;
+            const next = parseFloat(data.mod_time);
+            const prev = lastModTime ? parseFloat(lastModTime) : null;
+
+            // Monotonic barrier: a stale CDN/proxy copy must never roll the
+            // schedule back in time, even if it arrives after a fresher one.
+            if (prev !== null && isFinite(next) && next <= prev) {
+                lastModTime = prev;
+                return;
+            }
+
+            if (prev !== null && next !== prev) {
                 console.log('[Update] New schedule detected!');
-                loadSchedule(true);
+                // Могли поменять чужую группу: обновляем данные молча и
+                // показываем toast только если изменилась текущая.
+                const before = JSON.stringify((allGroupsData && allGroupsData[currentGroup]) || null);
+                loadSchedule(true).then(() => {
+                    const after = JSON.stringify((allGroupsData && allGroupsData[currentGroup]) || null);
+                    if (before !== after) showUpdateToast();
+                });
             }
             lastModTime = data.mod_time;
         })
         .catch(() => {});
-    
-    setTimeout(checkForUpdates, 10 * 60 * 1000);
+
+    if (!once) setTimeout(checkForUpdates, 10 * 60 * 1000);
+}
+
+// Students keep the tab open for days; background timers are throttled, so the
+// schedule is revalidated the moment the tab is actually looked at again.
+function revalidateOnReturn() {
+    if (document.visibilityState === 'hidden') return;
+    // performance.now() монотонен: перевод часов на телефоне не сломает троттлинг
+    if (performance.now() - _lastCheckAt < 60 * 1000) return;
+    checkForUpdates(true);
+}
+
+document.addEventListener('visibilitychange', revalidateOnReturn);
+window.addEventListener('focus', revalidateOnReturn);
+// телефон вышел из тоннеля
+window.addEventListener('online', revalidateOnReturn);
+// возврат из bfcache (Safari/Chrome восстанавливают страницу без DOMContentLoaded)
+window.addEventListener('pageshow', (event) => {
+    if (event.persisted) revalidateOnReturn();
+});
+
+function showUpdateToast() {
+    const el = document.createElement('div');
+    el.className = 'nkse-toast';
+    el.textContent = 'Расписание обновилось';
+    el.setAttribute('role', 'status');
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('is-in'));
+    setTimeout(() => {
+        el.classList.remove('is-in');
+        setTimeout(() => el.remove(), 400);
+    }, 3200);
 }

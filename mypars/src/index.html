@@ -16,11 +16,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="НКСЭ">
     <!-- Google Fonts: Plus Jakarta Sans -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
 <!-- Tailwind is prebuilt into app.css. The Play CDN used to compile the
          same rules in the browser on every load: ~110 KB of blocking JS plus
          the JIT work, which is the most expensive thing on a weak phone.
@@ -464,7 +461,8 @@
                 flex-wrap: wrap;
                 gap: 0.7rem 0.75rem;
             }
-            .header-brand { flex: 1 1 auto; }
+            .header-brand { flex: 1 1 0; }
+            /* "Меню" остаётся в первой строке рядом с брендом, а не уезжает вниз */
             .header-controls { flex: 1 1 100%; }
             .header-controls .group-picker { flex: 1 1 auto; min-width: 0; }
             .header-controls .group-trigger {
@@ -1318,6 +1316,18 @@
                         <p class="fs-meta text-slate-500 dark:text-slate-400 font-medium truncate" id="last-updated">Загрузка...</p>
                     </div>
                 </div>
+                <!-- Переключатель экосистемы. Стоит ПОСЛЕ бренда: логотип остаётся
+                     первой точкой чтения. Корень "/" — меню на обоих зеркалах. -->
+                <a class="menu-pill" href="/" title="Меню портала: расписание, библиотека, пожелания">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="3" width="7.5" height="7.5" rx="2"/>
+                        <rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/>
+                        <rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/>
+                        <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/>
+                    </svg>
+                    <span>Меню</span>
+                </a>
                 <span id="stale-dot" class="stale-dot" hidden title="Данные могут быть неактуальны"></span>
 
                 <!-- Группа, закрепление и тема -->
