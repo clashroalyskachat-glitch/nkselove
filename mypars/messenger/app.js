@@ -1,6 +1,11 @@
 (function () {
     'use strict';
 
+    const lowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4)
+        || (navigator.deviceMemory && navigator.deviceMemory <= 4)
+        || (navigator.connection && navigator.connection.saveData);
+    if (lowPower) document.documentElement.classList.add('pps-low-power');
+
     const $ = (id) => document.getElementById(id);
     const LS = {
         token: 'pps.token',
@@ -29,6 +34,7 @@
         chatId: null,
         chatChannel: null,
         presenceChannel: null,
+        presenceHooked: false,
         signalChannel: null,
         signalOut: new Map(),
         sb: null,
@@ -36,6 +42,8 @@
         sbUid: '',
         chatMeta: readJson('pps.chatmeta', {}) || {},
         hiddenChats: readJson('pps.hidden', {}) || {},
+        localDeleted: readJson('pps.deleted', {}) || {},
+        contextMessage: null,
         settings: (function () {
             const saved = readJson('pps.settings', null) || {};
             const defaults = {
@@ -43,6 +51,8 @@
                 dnd: false,
                 silent: true,
                 contactsOnly: false,
+                status: '',
+                invisible: false,
                 v2: true,
             };
             /* One-time migration: older builds enabled sounds by default. */
@@ -59,18 +69,60 @@
         seenSignals: new Set(),
         clockOffset: 0,
         audioCtx: null,
+        wakeLock: null,
         callStartedAt: 0,
         chatLastTs: '',
         messages: new Map(),
         online: new Set(),
+        statuses: {},
         unread: new Map(),
         search: [],
+        searchLoading: false,
         searchTimer: 0,
         authMode: 'login',
         retry: 0,
         call: null,
         pendingCall: null,
+        scanStream: null,
+        scanTimer: 0,
+        scanDetector: null,
+        scanCanvas: null,
+        scanLoading: false,
+        stickerPacks: (readJson('pps.stickerpacks', null) || [])
+            .filter((pack) => pack && pack.id && Array.isArray(pack.stickers)),
+        activePack: '',
     };
+
+    const EMOJIS = [
+        '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣',
+        '😊', '😇', '🙂', '😉', '😍', '🥰', '😘', '😋',
+        '😛', '🤪', '😜', '🤨', '🧐', '🤓', '😎', '🥳',
+        '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '😣',
+        '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠',
+        '😡', '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰',
+        '😥', '😓', '🤗', '🤔', '🤭', '🤫', '🤥', '😶',
+        '😐', '😑', '😬', '🙄', '😯', '😦', '😧', '😮',
+        '😲', '🥱', '😴', '🤤', '😪', '😵', '🤐', '🥴',
+        '🤢', '🤮', '🤧', '😷', '🤒', '🤕', '🤑', '🤠',
+        '😈', '👿', '👻', '💀', '👽', '🤖', '💩', '🔥',
+        '✨', '💫', '⭐', '🌟', '✅', '❤️', '🧡', '💛',
+        '💚', '💙', '💜', '🖤', '🤍', '💔', '💯', '👍',
+        '👎', '👏', '🙌', '🤝', '🙏', '💪', '🎉', '🎊',
+        '🎁', '🍕', '🍔', '☕', '🎧', '🎮', '⚽', '🏀',
+        '🚀', '🌙', '☀️', '🌈',
+    ];
+    const STICKERS = [
+        '😂', '🥰', '😎', '🤯', '😭', '😡', '🥳', '🤔',
+        '👍', '🔥', '💯', '🎉', '❤️', '🚀', '🌙', '💩',
+    ];
+    let emojiTab = 'emoji';
+
+    if (!state.stickerPacks.length) {
+        state.stickerPacks = [{ id: 'reactions', name: 'Реакции', stickers: STICKERS.slice() }];
+    }
+    if (!state.stickerPacks.some((pack) => pack.id === state.activePack)) {
+        state.activePack = state.stickerPacks[0].id;
+    }
 
     const call = {
         pc: null,
@@ -137,6 +189,28 @@
     }
     const isOnline = (nick) => state.online.has(String(nick).toLowerCase());
 
+    function presenceText(nick) {
+        if (!isOnline(nick)) return 'не в сети';
+        const status = state.statuses[String(nick).toLowerCase()];
+        return status || 'в сети';
+    }
+
+    function updateOwnStatus() {
+        const text = state.settings.invisible ? 'скрыт' : (state.settings.status || 'в сети');
+        if ($('settings-status')) $('settings-status').textContent = text;
+        if ($('me-status')) $('me-status').textContent = text;
+    }
+
+    function trackPresence() {
+        if (!state.presenceChannel || !state.me) return;
+        state.presenceChannel.track({
+            uid: state.sbUid,
+            nick: state.me.nick,
+            status: state.settings.status || '',
+            invisible: !!state.settings.invisible,
+        }).catch(() => {});
+    }
+
     function fmtTime(ts) {
         try {
             return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -175,14 +249,29 @@
         return false;
     }
 
+    function updatePeerCount() {
+        const el = $('peer-count');
+        if (!el) return;
+        const dot = $('conn-dot-side');
+        const connected = dot ? dot.classList.contains('on') : true;
+        const count = state.online.size;
+        el.textContent = !connected
+            ? 'Нет связи'
+            : state.settings.invisible
+                ? 'Скрыт'
+                : (count > 0 ? count + ' онлайн' : 'В сети');
+    }
+
     function setConn(on) {
         const dot = $('conn-dot');
         if (dot) dot.classList.toggle('on', !!on);
         const side = $('conn-dot-side');
         if (side) side.classList.toggle('on', !!on);
+        updatePeerCount();
     }
 
     function showAuth(message) {
+        document.body.classList.add('auth-locked');
         $('auth-modal').hidden = false;
         if (message) {
             $('auth-error').textContent = message;
@@ -192,6 +281,7 @@
     }
 
     function hideAuth() {
+        document.body.classList.remove('auth-locked');
         $('auth-modal').hidden = true;
         $('auth-error').hidden = true;
     }
@@ -202,14 +292,13 @@
         writeJson(LS.user, user);
         $('me-bar').hidden = false;
         $('me-nick').textContent = user.nick;
-        $('me-status').textContent = 'в сети';
         $('me-avatar').textContent = initial(user.nick);
         $('logout-btn').hidden = true;
         paintAvatar($('settings-avatar'), user.nick);
         $('settings-nick').textContent = user.nick;
-        $('settings-status').textContent = 'в сети';
+        updateOwnStatus();
         $('search').disabled = false;
-        $('peer-count').textContent = state.online.size + ' онлайн';
+        updatePeerCount();
     }
 
     /* ----------------------------------------------------------- websocket */
@@ -290,6 +379,7 @@
 
             case 'search':
                 state.search = (msg.users || []).filter((u) => !state.me || u.nick !== state.me.nick);
+                state.searchLoading = false;
                 renderSearch();
                 break;
 
@@ -379,6 +469,151 @@
         writeJson('pps.hidden', state.hiddenChats);
     }
 
+    function isLocallyDeleted(nick, id) {
+        return (state.localDeleted[nick] || []).includes(id);
+    }
+
+    function markLocallyDeleted(nick, id) {
+        const list = state.localDeleted[nick] || [];
+        if (!list.includes(id)) list.push(id);
+        state.localDeleted[nick] = list.slice(-500);
+        writeJson('pps.deleted', state.localDeleted);
+    }
+
+    function removeMessageLocal(nick, id) {
+        const list = loadHistory(nick).filter((message) => message.id !== id);
+        saveHistory(nick, list);
+        if (state.peer === nick) renderMessages();
+        renderChats();
+    }
+
+    function handleDeleted(payload) {
+        const clientId = payload && payload.clientId;
+        const dbId = payload && payload.id;
+        for (const [nick, list] of [...state.messages.entries()]) {
+            const next = list.filter((message) => {
+                if (clientId && message.id === clientId) return false;
+                if (dbId && message.dbId === dbId) return false;
+                return true;
+            });
+            if (next.length !== list.length) saveHistory(nick, next);
+        }
+        if (state.peer) renderMessages();
+        renderChats();
+    }
+
+    function removeChatLocal(nick) {
+        const wasActive = state.peer === nick;
+        state.chats = state.chats.filter((chat) => chat.nick !== nick);
+        writeJson(LS.chats, state.chats);
+        localStorage.removeItem(historyKey(nick));
+        state.messages.delete(nick);
+        state.unread.delete(nick);
+        delete state.chatMeta[nick];
+        saveChatMeta();
+        delete state.localDeleted[nick];
+        writeJson('pps.deleted', state.localDeleted);
+        if (wasActive) closeChat();
+        else renderChats();
+    }
+
+    function handleChatDeleted(payload) {
+        const nick = payload && payload.nick;
+        if (!nick) return;
+        hideChat(nick);
+        removeChatLocal(nick);
+        showToast('Чат удалён');
+    }
+
+    function showMessageMenu(event, message) {
+        state.contextMessage = message;
+        const menu = $('message-menu');
+        const deleteAll = menu.querySelector('[data-msg-action="delete-all"]');
+        if (deleteAll) deleteAll.hidden = false;
+
+        menu.hidden = false;
+        const width = 190;
+        const height = 130;
+        const x = Math.min(event.clientX || 20, window.innerWidth - width - 10);
+        const y = Math.min(event.clientY || 20, window.innerHeight - height - 10);
+        menu.style.left = Math.max(8, x) + 'px';
+        menu.style.top = Math.max(8, y) + 'px';
+        event.preventDefault();
+    }
+
+    async function deleteContextMessage(forAll) {
+        const message = state.contextMessage;
+        const peer = state.peer;
+        $('message-menu').hidden = true;
+        state.contextMessage = null;
+        if (!message || !peer) return;
+
+        if (forAll) {
+            if (!state.me) return;
+            removeMessageLocal(peer, message.id);
+            let ok = false;
+
+            try {
+                const session = readNkseSession();
+                const result = await appsScriptCall({
+                    board: 'messages',
+                    op: 'delete',
+                    token: session.token,
+                    id: message.dbId || '',
+                    clientId: message.id || '',
+                });
+                ok = !!(result && result.ok);
+            } catch (e) {
+                ok = false;
+            }
+
+            if (!ok && state.sb) {
+                try {
+                    const patch = {
+                        deleted_at: new Date().toISOString(),
+                        deleted_for_all: true,
+                        body: '',
+                    };
+                    let query = state.sb.from('messages').update(patch);
+                    query = message.dbId
+                        ? query.eq('id', message.dbId)
+                        : query.eq('client_id', message.id).eq('sender_id', state.sbUid);
+                    const { error } = await query;
+                    ok = !error;
+                } catch (e) {
+                    ok = false;
+                }
+            }
+
+            if (!ok) {
+                const list = loadHistory(peer);
+                if (!list.some((item) => item.id === message.id)) list.push(message);
+                saveHistory(peer, list);
+                renderMessages();
+                renderChats();
+                showToast('Не удалось удалить у всех');
+                return;
+            }
+
+            if (state.peerUid) {
+                sendUserEvent(state.peerUid, 'message-deleted', {
+                    id: message.dbId,
+                    clientId: message.id,
+                }).catch(() => {});
+            }
+            if (state.chatChannel) {
+                state.chatChannel.send({
+                    type: 'broadcast',
+                    event: 'message-deleted',
+                    payload: { id: message.dbId, clientId: message.id },
+                }).catch(() => {});
+            }
+        } else {
+            markLocallyDeleted(peer, message.id);
+            removeMessageLocal(peer, message.id);
+        }
+    }
+
     function hideChat(nick) {
         state.hiddenChats[nick] = serverNow();
         saveHiddenChats();
@@ -419,6 +654,9 @@
             const element = $(id);
             if (element) element.checked = !!state.settings[map[id]];
         });
+        if ($('set-status')) $('set-status').value = state.settings.status || '';
+        if ($('set-invisible')) $('set-invisible').checked = !!state.settings.invisible;
+        updateOwnStatus();
     }
 
     function applyAccent(name) {
@@ -462,6 +700,7 @@
             event.target.checked = checked;
             state.settings.notifications = checked;
             saveSettings();
+            if (checked) initPush();
         });
 
         $('set-dnd').addEventListener('change', (event) => {
@@ -480,15 +719,116 @@
             state.settings.contactsOnly = event.target.checked;
             saveSettings();
         });
+
+        $('set-status').addEventListener('change', (event) => {
+            state.settings.status = event.target.value.trim().slice(0, 40);
+            event.target.value = state.settings.status;
+            saveSettings();
+            updateOwnStatus();
+            trackPresence();
+        });
+        $('set-status').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') event.target.blur();
+        });
+
+        $('set-invisible').addEventListener('change', (event) => {
+            state.settings.invisible = event.target.checked;
+            saveSettings();
+            updateOwnStatus();
+            updatePeerCount();
+            trackPresence();
+        });
+
+        $('push-test').addEventListener('click', () => {
+            if (!state.me) return;
+            if (!state.settings.notifications || Notification.permission !== 'granted') {
+                showToast('Сначала включи уведомления');
+                return;
+            }
+            pushNotify(state.me.nick, 'Тест уведомления', 'message');
+            showToast('Отправлено. Сверни вкладку.');
+        });
     }
 
-    function notify(title, body, tag) {
+    function notify(title, body, tag, nick) {
         if (!state.settings.notifications || state.settings.dnd) return;
         if (!('Notification' in window) || Notification.permission !== 'granted') return;
         if (document.visibilityState === 'visible' && document.hasFocus()) return;
         try {
-            new Notification(title, { body, tag, icon: '../library/icon.svg' });
+            const notification = new Notification(title, {
+                body,
+                tag,
+                icon: '../library/icon.svg',
+                vibrate: [120, 60, 120],
+            });
+            notification.onclick = () => {
+                try { window.focus(); } catch (e) { /* ignore */ }
+                if (nick && state.me && nick !== state.me.nick) {
+                    openChat({ nick, uid: null });
+                }
+                notification.close();
+            };
         } catch (e) { /* ignore */ }
+    }
+
+    let pushStarted = false;
+    async function initPush() {
+        if (pushStarted) return;
+        if (!state.me || !state.settings.notifications) return;
+        if (!('serviceWorker' in navigator) || !('Notification' in window)) return;
+        if (Notification.permission !== 'granted') return;
+        const config = window.PPS_FIREBASE;
+        if (!config || !config.vapidKey) return;
+
+        pushStarted = true;
+        try {
+            const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js', { scope: './' });
+            const appModule = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+            const messagingModule = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js');
+            const app = appModule.initializeApp(config);
+            const messaging = messagingModule.getMessaging(app);
+            const fcmToken = await messagingModule.getToken(messaging, {
+                vapidKey: config.vapidKey,
+                serviceWorkerRegistration: registration,
+            });
+            if (!fcmToken) return;
+
+            const session = readNkseSession();
+            await appsScriptCall({
+                board: 'push',
+                op: 'register',
+                token: session.token,
+                nick: state.me.nick,
+                fcm: fcmToken,
+            });
+
+            messagingModule.onMessage(messaging, (payload) => {
+                const data = payload.data || {};
+                const title = (payload.notification && payload.notification.title) || data.title || 'pps';
+                const body = (payload.notification && payload.notification.body) || data.body || '';
+                notify(title, body, data.tag || 'push', data.nick || '');
+            });
+        } catch (e) {
+            pushStarted = false;
+            console.warn('push', e);
+        }
+    }
+
+    function pushNotify(to, body, type) {
+        if (!state.me || !to) return;
+        const session = readNkseSession();
+        if (!session.token) return;
+        appsScriptCall({
+            board: 'push',
+            op: 'send',
+            token: session.token,
+            to,
+            nick: state.me.nick,
+            title: type === 'call' ? 'Входящий звонок' : 'pps · ' + state.me.nick,
+            body: String(body || '').slice(0, 120),
+            type: type || 'message',
+            tag: (type || 'message') + '-' + state.me.nick,
+        }).catch(() => {});
     }
 
     let toastTimer = 0;
@@ -529,6 +869,7 @@
         const ring = () => {
             beep(760, 0.18);
             setTimeout(() => beep(560, 0.18), 220);
+            if (navigator.vibrate) navigator.vibrate([300, 200, 300]);
         };
         ring();
         state.ringTimer = setInterval(ring, 1600);
@@ -537,6 +878,22 @@
     function stopRing() {
         if (state.ringTimer) clearInterval(state.ringTimer);
         state.ringTimer = 0;
+        if (navigator.vibrate) navigator.vibrate(0);
+    }
+
+    async function requestWakeLock() {
+        try {
+            if ('wakeLock' in navigator && !state.wakeLock) {
+                state.wakeLock = await navigator.wakeLock.request('screen');
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    function releaseWakeLock() {
+        if (state.wakeLock) {
+            try { state.wakeLock.release().catch(() => {}); } catch (e) { /* ignore */ }
+            state.wakeLock = null;
+        }
     }
 
     function stopAllAudio() {
@@ -570,7 +927,7 @@
         renderChats();
     }
 
-    function chatAction(action) {
+    async function chatAction(action) {
         const nick = state.peer;
         if (!nick) return;
         const meta = metaFor(nick);
@@ -599,32 +956,24 @@
         }
 
         if (action === 'delete') {
-            if (confirm('Удалить чат «' + nick + '»? История на этом устройстве исчезнет.')) {
-                state.chats = state.chats.filter((chat) => chat.nick !== nick);
-                writeJson(LS.chats, state.chats);
-                localStorage.removeItem(historyKey(nick));
-                state.messages.delete(nick);
-                delete state.chatMeta[nick];
-                hideChat(nick);
-                saveChatMeta();
-                state.unread.delete(nick);
-
-                clearInterval(state.syncTimer);
-                if (state.chatChannel && state.sb) {
-                    try { state.sb.removeChannel(state.chatChannel); } catch (e) { /* ignore */ }
+            const both = !!(state.sb && state.peerUid)
+                && confirm('Удалить чат у обоих? OK — у обоих, Отмена — только у тебя.');
+            if (both) {
+                try {
+                    const { error } = await state.sb.rpc('delete_direct_chat', { other_id: state.peerUid });
+                    if (error) throw error;
+                } catch (e) {
+                    showToast('Не удалось удалить у обоих');
+                    return;
                 }
-                state.chatChannel = null;
-                state.chatId = null;
-                state.chatLastTs = '';
-                state.peer = null;
-                state.peerUid = null;
-
-                $('chat-view').hidden = true;
-                $('empty').hidden = false;
-                $('messages').replaceChildren();
-                $('app').classList.remove('show-chat');
-                renderChats();
+                sendUserEvent(state.peerUid, 'chat-deleted', {
+                    nick,
+                    chatId: state.chatId,
+                }).catch(() => {});
             }
+
+            hideChat(nick);
+            removeChatLocal(nick);
         }
 
         $('chat-menu').hidden = true;
@@ -661,7 +1010,7 @@
         $('empty').hidden = true;
         $('peer-nick').textContent = target.nick;
         paintAvatar($('peer-avatar'), target.nick);
-        $('peer-status').textContent = isOnline(target.nick) ? 'в сети' : 'не в сети';
+        $('peer-status').textContent = presenceText(target.nick);
         $('app').classList.add('show-chat');
         $('search').value = '';
         $('search-results').hidden = true;
@@ -721,7 +1070,7 @@
             name.textContent = nick;
             const preview = document.createElement('small');
             const last = lastMessage(nick);
-            preview.textContent = last ? last.text : (isOnline(nick) ? 'в сети' : 'нет сообщений');
+            preview.textContent = last ? previewText(last.text) : (isOnline(nick) ? 'в сети' : 'нет сообщений');
             meta.append(name, preview);
 
             button.append(avatar, meta);
@@ -744,7 +1093,10 @@
             list.append(button);
         }
 
-        $('peer-count').textContent = state.online.size + ' онлайн';
+        const empty = state.chats.length === 0;
+        document.querySelector('.sidebar').classList.toggle('is-empty', empty);
+        $('side-empty').hidden = !empty;
+        updatePeerCount();
     }
 
     function lastMessage(nick) {
@@ -754,9 +1106,9 @@
 
     function renderPresence() {
         renderChats();
-        if (state.peer) $('peer-status').textContent = isOnline(state.peer) ? 'в сети' : 'не в сети';
+        if (state.peer) $('peer-status').textContent = presenceText(state.peer);
         if (!$('search-results').hidden) renderSearch();
-        $('peer-count').textContent = state.online.size + ' онлайн';
+        updatePeerCount();
     }
 
     function receiveMessage(message) {
@@ -779,6 +1131,45 @@
 
     /* ------------------------------------------------------------ messages */
 
+    function isEmojiOnly(text) {
+        const value = String(text || '').trim();
+        if (!value || value.length > 16) return false;
+        if (/[0-9A-Za-zА-Яа-яЁё]/.test(value)) return false;
+        return /\p{Extended_Pictographic}/u.test(value);
+    }
+
+    function stickerUrl(text) {
+        const match = /^\[\[sticker:([^\]]+)\]\]$/.exec(String(text || '').trim());
+        if (!match) return '';
+        return /^https:\/\//i.test(match[1]) ? match[1] : '';
+    }
+
+    function imageUrl(text) {
+        const match = /^\[\[img:([^\]]+)\]\]$/.exec(String(text || '').trim());
+        if (!match) return '';
+        return /^https:\/\//i.test(match[1]) ? match[1] : '';
+    }
+
+    function fileInfo(text) {
+        const match = /^\[\[file:([^|\]]+)\|([^\]]*)\]\]$/.exec(String(text || '').trim());
+        if (!match || !/^https:\/\//i.test(match[1])) return null;
+        return { url: match[1], name: match[2] || 'Файл' };
+    }
+
+    function driveImageUrl(url) {
+        const value = String(url || '');
+        const match = /drive\.google\.com\/uc\?export=view&(?:amp;)?id=([^&]+)/.exec(value);
+        if (match) return 'https://drive.google.com/thumbnail?id=' + match[1] + '&sz=w1600';
+        return value;
+    }
+
+    function previewText(text) {
+        if (stickerUrl(text)) return 'Стикер';
+        if (imageUrl(text)) return 'Фото';
+        if (fileInfo(text)) return 'Файл';
+        return String(text || '');
+    }
+
     function renderMessages() {
         if (!state.peer) return;
         const box = $('messages');
@@ -789,6 +1180,7 @@
             .sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
         let lastDay = '';
         for (const message of ordered) {
+            if (isLocallyDeleted(state.peer, message.id)) continue;
             const day = dayLabel(message.ts);
             if (day !== lastDay) {
                 lastDay = day;
@@ -812,10 +1204,46 @@
             const own = state.me && message.from === state.me.nick;
             const row = document.createElement('div');
             row.className = 'msg' + (own ? ' own' : '');
+            row.dataset.id = message.id;
+            row._message = message;
 
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
-            bubble.textContent = message.text;
+            const image = imageUrl(message.text);
+            const file = fileInfo(message.text);
+            const sticker = stickerUrl(message.text);
+            if (image) {
+                bubble.classList.add('is-image');
+                const img = document.createElement('img');
+                img.src = driveImageUrl(image);
+                img.alt = 'фото';
+                img.loading = 'lazy';
+                bubble.append(img);
+            } else if (file) {
+                bubble.classList.add('is-file');
+                const link = document.createElement('a');
+                link.className = 'msg-file';
+                link.href = file.url;
+                link.target = '_blank';
+                link.rel = 'noopener';
+                const icon = document.createElement('span');
+                icon.className = 'msg-file-icon';
+                icon.textContent = '📎';
+                const label = document.createElement('b');
+                label.textContent = file.name;
+                link.append(icon, label);
+                bubble.append(link);
+            } else if (sticker) {
+                bubble.classList.add('is-sticker');
+                const img = document.createElement('img');
+                img.src = driveImageUrl(sticker);
+                img.alt = 'стикер';
+                img.loading = 'lazy';
+                bubble.append(img);
+            } else {
+                bubble.textContent = message.text;
+                if (isEmojiOnly(message.text)) bubble.classList.add('is-emoji');
+            }
 
             const time = document.createElement('time');
             time.textContent = fmtTime(message.ts);
@@ -827,7 +1255,9 @@
             }
             if (own && message.status === 'failed') {
                 const status = document.createElement('span');
-                status.className = 'status';
+                status.className = 'status retry';
+                status.dataset.retry = message.id;
+                status.title = 'Нажми, чтобы отправить снова';
                 status.textContent = '· не отправлено';
                 time.append(status);
             }
@@ -847,10 +1277,8 @@
         button.hidden = !far;
     }
 
-    function submitMessage(event) {
-        event.preventDefault();
-        const input = $('text');
-        const text = input.value.trim();
+    function sendText(raw) {
+        const text = String(raw || '').trim();
         if (!text || !state.peer || metaFor(state.peer).blocked) return;
 
         const message = {
@@ -865,7 +1293,6 @@
         const list = loadHistory(state.peer);
         list.push(message);
         saveHistory(state.peer, list);
-        input.value = '';
         renderMessages();
         renderChats();
 
@@ -881,15 +1308,304 @@
         }
     }
 
+    function submitMessage(event) {
+        event.preventDefault();
+        const input = $('text');
+        sendText(input.value);
+        input.value = '';
+    }
+
+    function retryMessage(message) {
+        if (!message || !state.peer) return;
+        message.status = 'sending';
+        saveHistory(state.peer, loadHistory(state.peer));
+        renderMessages();
+        if (USE_SUPABASE) {
+            supabaseSend(message);
+            return;
+        }
+        if (!send({ type: 'message', to: state.peer, text: message.text, id: message.id })) {
+            message.status = 'failed';
+            saveHistory(state.peer, loadHistory(state.peer));
+            renderMessages();
+        }
+    }
+
+    function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const result = String(reader.result || '');
+                resolve(result.slice(result.indexOf(',') + 1));
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    async function uploadFile(file) {
+        if (!file || !state.peer) return;
+        if (file.size > 8 * 1024 * 1024) {
+            showToast('Файл больше 8 МБ');
+            return;
+        }
+
+        let blob = file;
+        let name = file.name || 'file';
+        let mime = file.type || 'application/octet-stream';
+
+        if (mime.indexOf('image/') === 0) {
+            try {
+                const bitmap = await createImageBitmap(file);
+                const max = 1600;
+                const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+                canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                const out = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+                if (bitmap.close) bitmap.close();
+                if (out) {
+                    blob = out;
+                    mime = 'image/jpeg';
+                    name = name.replace(/\.[^.]+$/, '') + '.jpg';
+                }
+            } catch (e) { /* keep original */ }
+        }
+
+        if (blob.size > 8 * 1024 * 1024) {
+            showToast('Файл слишком большой');
+            return;
+        }
+
+        showToast('Загружаю…');
+        try {
+            const data = await blobToBase64(blob);
+            const session = readNkseSession();
+            const result = await appsScriptCall({
+                board: 'media',
+                op: 'upload',
+                token: session.token,
+                name,
+                mime,
+                data,
+            });
+            if (!result || !result.ok || !result.url) {
+                throw new Error(result && result.error ? result.error : 'upload');
+            }
+            if (mime.indexOf('image/') === 0) sendText('[[img:' + (result.thumb || result.url) + ']]');
+            else sendText('[[file:' + (result.view || result.url) + '|' + name.replace(/[|\]]/g, '') + ']]');
+        } catch (e) {
+            const code = e && e.message ? e.message : '';
+            const text = code === 'no_session' ? 'Сессия истекла, войди заново'
+                : code === 'too_big' ? 'Файл больше 8 МБ'
+                    : code === 'unknown_action' ? 'Сервер не обновлён — переразверни Apps Script'
+                        : 'Не удалось загрузить файл';
+            showToast(text);
+        }
+    }
+
+    function insertEmoji(emoji) {
+        const input = $('text');
+        const start = input.selectionStart == null ? input.value.length : input.selectionStart;
+        const end = input.selectionEnd == null ? input.value.length : input.selectionEnd;
+        input.value = input.value.slice(0, start) + emoji + input.value.slice(end);
+        const pos = start + emoji.length;
+        input.focus();
+        input.setSelectionRange(pos, pos);
+    }
+
+    function sendSticker(sticker) {
+        if (/^https:\/\//i.test(sticker)) {
+            sendText('[[sticker:' + sticker + ']]');
+        } else {
+            sendText(sticker);
+        }
+    }
+
+    function openPackModal() {
+        $('pack-error').hidden = true;
+        $('pack-modal').hidden = false;
+        setTimeout(() => $('pack-name').focus(), 30);
+    }
+
+    function saveStickerPack(name, stickers) {
+        const pack = {
+            id: newId(),
+            name: String(name || 'Пак').trim().slice(0, 40) || 'Пак',
+            stickers: stickers.slice(0, 120),
+        };
+        state.stickerPacks.push(pack);
+        state.activePack = pack.id;
+        writeJson('pps.stickerpacks', state.stickerPacks);
+        $('pack-modal').hidden = true;
+        $('pack-name').value = '';
+        $('pack-link').value = '';
+        $('pack-urls').value = '';
+        emojiTab = 'sticker';
+        document.querySelectorAll('[data-emoji-tab]').forEach((tab) => {
+            tab.classList.toggle('is-active', tab.dataset.emojiTab === 'sticker');
+        });
+        renderEmojiPanel();
+        $('emoji-panel').hidden = false;
+        $('emoji-btn').setAttribute('aria-expanded', 'true');
+    }
+
+    async function addStickerPack() {
+        const name = $('pack-name').value.trim();
+        const link = $('pack-link').value.trim();
+        const urls = $('pack-urls').value
+            .split(/\s+/)
+            .map((value) => value.trim())
+            .filter((value) => /^https:\/\//i.test(value));
+        const error = $('pack-error');
+        error.hidden = true;
+
+        if (link) {
+            const match = link.match(/addstickers\/([^/?#]+)/i) || link.match(/^@?([A-Za-z0-9_]+)$/);
+            const packName = match ? match[1] : '';
+            if (!packName) {
+                error.textContent = 'Не понял ссылку на пак.';
+                error.hidden = false;
+                return;
+            }
+            const session = readNkseSession();
+            const button = $('pack-add');
+            button.disabled = true;
+            button.textContent = 'Загружаю…';
+            try {
+                const data = await appsScriptCall({
+                    board: 'media',
+                    op: 'stickerpack',
+                    token: session.token,
+                    name: packName,
+                    limit: 16,
+                });
+                if (!data || !data.ok) throw new Error('failed');
+                const stickers = (data.stickers || []).filter((url) => /^https:\/\//i.test(url));
+                if (!stickers.length) throw new Error('empty');
+                saveStickerPack(data.title || name, stickers);
+            } catch (e) {
+                error.textContent = 'Не удалось загрузить пак. Проверь, что сервер обновлён и в нём есть TELEGRAM_BOT_TOKEN.';
+                error.hidden = false;
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Добавить пак';
+            }
+            return;
+        }
+
+        if (urls.length) {
+            saveStickerPack(name, urls);
+            return;
+        }
+
+        error.textContent = 'Вставь ссылку на пак Telegram или ссылки на картинки.';
+        error.hidden = false;
+    }
+
+    function renderEmojiPanel() {
+        const grid = $('emoji-grid');
+        const packs = $('emoji-packs');
+        if (!grid || !packs) return;
+
+        const stickersMode = emojiTab === 'sticker';
+        packs.hidden = !stickersMode;
+        grid.classList.toggle('stickers', stickersMode);
+        packs.replaceChildren();
+
+        if (stickersMode) {
+            for (const pack of state.stickerPacks) {
+                const chip = document.createElement('span');
+                chip.className = 'pack-chip' + (pack.id === state.activePack ? ' is-active' : '');
+                const title = document.createElement('button');
+                title.type = 'button';
+                title.className = 'pack-name';
+                title.textContent = pack.name;
+                title.addEventListener('click', () => {
+                    state.activePack = pack.id;
+                    renderEmojiPanel();
+                });
+                chip.append(title);
+                if (pack.id !== 'reactions') {
+                    const remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.className = 'pack-del';
+                    remove.textContent = '×';
+                    remove.title = 'Удалить пак';
+                    remove.addEventListener('click', (event) => {
+                        event.stopPropagation();
+                        if (!confirm('Удалить пак «' + pack.name + '»?')) return;
+                        state.stickerPacks = state.stickerPacks.filter((item) => item.id !== pack.id);
+                        if (state.activePack === pack.id) {
+                            state.activePack = state.stickerPacks[0] ? state.stickerPacks[0].id : '';
+                        }
+                        writeJson('pps.stickerpacks', state.stickerPacks);
+                        renderEmojiPanel();
+                    });
+                    chip.append(remove);
+                }
+                packs.append(chip);
+            }
+            const add = document.createElement('button');
+            add.type = 'button';
+            add.className = 'pack-add';
+            add.textContent = '＋ Пак';
+            add.addEventListener('click', openPackModal);
+            packs.append(add);
+        }
+
+        grid.replaceChildren();
+        const active = state.stickerPacks.find((pack) => pack.id === state.activePack);
+        const list = stickersMode ? (active ? active.stickers : []) : EMOJIS;
+        for (const sticker of list) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            if (stickersMode && /^https:\/\//i.test(sticker)) {
+                const img = document.createElement('img');
+                img.src = driveImageUrl(sticker);
+                img.alt = 'стикер';
+                img.loading = 'lazy';
+                button.append(img);
+            } else {
+                button.textContent = sticker;
+            }
+            button.addEventListener('click', () => {
+                if (stickersMode) {
+                    $('emoji-panel').hidden = true;
+                    $('emoji-btn').setAttribute('aria-expanded', 'false');
+                    sendSticker(sticker);
+                } else {
+                    insertEmoji(sticker);
+                }
+            });
+            grid.append(button);
+        }
+    }
+
     /* -------------------------------------------------------------- search */
 
     function onSearch() {
         clearTimeout(state.searchTimer);
         const query = $('search').value.trim();
         if (!query) {
+            state.searchLoading = false;
             $('search-results').hidden = true;
             return;
         }
+
+        const lower = query.toLowerCase();
+        state.search = state.chats
+            .filter((chat) => chat.nick.toLowerCase().includes(lower))
+            .map((chat) => ({
+                nick: chat.nick,
+                uid: chat.uid,
+                online: isOnline(chat.nick),
+            }));
+        state.searchLoading = true;
+        renderSearch();
+
         state.searchTimer = setTimeout(() => {
             if (USE_SUPABASE) supabaseSearch(query);
             else send({ type: 'search', query });
@@ -904,7 +1620,7 @@
         if (!state.search.length) {
             const empty = document.createElement('div');
             empty.className = 'search-empty';
-            empty.textContent = 'Никто не найден';
+            empty.textContent = state.searchLoading ? 'Поиск…' : 'Никто не найден';
             box.append(empty);
             return;
         }
@@ -922,11 +1638,20 @@
             name.textContent = user.nick;
 
             const status = document.createElement('small');
-            status.textContent = user.online ? 'в сети' : 'не в сети';
+            status.textContent = user.online
+                ? (state.statuses[user.nick.toLowerCase()] || 'в сети')
+                : 'не в сети';
 
             button.append(avatar, name, status);
             button.addEventListener('click', () => openChat({ nick: user.nick, uid: user.uid }));
             box.append(button);
+        }
+
+        if (state.searchLoading) {
+            const loading = document.createElement('div');
+            loading.className = 'search-empty';
+            loading.textContent = 'Поиск…';
+            box.append(loading);
         }
     }
 
@@ -952,6 +1677,168 @@
             box.textContent = 'QR недоступен';
         }
         $('qr-modal').hidden = false;
+    }
+
+    function loadQrDecoder() {
+        if (window.jsQR) return Promise.resolve(window.jsQR);
+        if (state.scanLoading) {
+            return new Promise((resolve) => {
+                const started = Date.now();
+                const wait = setInterval(() => {
+                    if (window.jsQR) {
+                        clearInterval(wait);
+                        resolve(window.jsQR);
+                    } else if (Date.now() - started > 12000) {
+                        clearInterval(wait);
+                        resolve(null);
+                    }
+                }, 100);
+            });
+        }
+        state.scanLoading = true;
+        return new Promise((resolve) => {
+            const script = document.createElement('script');
+            script.src = 'jsqr.min.js?v=7';
+            script.onload = () => {
+                state.scanLoading = false;
+                resolve(window.jsQR || null);
+            };
+            script.onerror = () => {
+                state.scanLoading = false;
+                resolve(null);
+            };
+            document.head.append(script);
+        });
+    }
+
+    function scanHint(text) {
+        const el = $('scan-hint');
+        if (el) el.textContent = text;
+    }
+
+    function stopScanLoop() {
+        clearTimeout(state.scanTimer);
+        state.scanTimer = 0;
+    }
+
+    function stopScan() {
+        stopScanLoop();
+        if (state.scanStream) {
+            state.scanStream.getTracks().forEach((track) => track.stop());
+            state.scanStream = null;
+        }
+        const video = $('scan-video');
+        if (video) video.srcObject = null;
+    }
+
+    function closeScanner() {
+        stopScan();
+        $('scan-modal').hidden = true;
+    }
+
+    function parseQrNick(text) {
+        const raw = String(text || '').trim();
+        if (!raw) return '';
+        try {
+            const url = new URL(raw, location.origin);
+            const add = url.searchParams.get('add');
+            if (add) return add.trim();
+        } catch (e) { /* not a url */ }
+        return /^[A-Za-zА-Яа-яЁё0-9_-]{3,20}$/.test(raw) ? raw : '';
+    }
+
+    function handleScanResult(text) {
+        if ($('scan-modal').hidden) return;
+        closeScanner();
+        const nick = parseQrNick(text);
+        if (!nick) {
+            showToast('Это не QR мессенджера');
+            return;
+        }
+        openChat({ nick, uid: null });
+    }
+
+    async function decodeQr(source, width, height, invert) {
+        if (state.scanDetector) {
+            try {
+                const codes = await state.scanDetector.detect(source);
+                if (codes && codes.length) return codes[0].rawValue;
+            } catch (e) { /* fall back to jsQR */ }
+        }
+        const jsQR = await loadQrDecoder();
+        if (!jsQR) return '';
+        const canvas = state.scanCanvas || (state.scanCanvas = document.createElement('canvas'));
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(source, 0, 0, width, height);
+        const data = ctx.getImageData(0, 0, width, height);
+        const code = jsQR(data.data, width, height, {
+            inversionAttempts: invert ? 'attemptBoth' : 'dontInvert',
+        });
+        return code ? code.data : '';
+    }
+
+    function startScanLoop() {
+        stopScanLoop();
+        const tick = async () => {
+            if (!state.scanStream) return;
+            const video = $('scan-video');
+            if (video && video.readyState >= 2 && video.videoWidth) {
+                try {
+                    const text = await decodeQr(video, video.videoWidth, video.videoHeight, false);
+                    if (text) {
+                        handleScanResult(text);
+                        return;
+                    }
+                } catch (e) { /* keep scanning */ }
+            }
+            if (!state.scanStream) return;
+            state.scanTimer = setTimeout(tick, 240);
+        };
+        state.scanTimer = setTimeout(tick, 250);
+    }
+
+    async function openScanner() {
+        if (!state.me) return showAuth();
+        $('qr-modal').hidden = true;
+        $('scan-modal').hidden = false;
+        $('scan-file').value = '';
+        scanHint('Запрашиваю камеру…');
+        if ('BarcodeDetector' in window) {
+            try {
+                state.scanDetector = new BarcodeDetector({ formats: ['qr_code'] });
+            } catch (e) {
+                state.scanDetector = null;
+            }
+        }
+        try {
+            state.scanStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: { ideal: 'environment' } },
+                audio: false,
+            });
+            const video = $('scan-video');
+            video.srcObject = state.scanStream;
+            await video.play();
+            scanHint('Наведи камеру на QR-код');
+            startScanLoop();
+        } catch (e) {
+            scanHint('Нет доступа к камере. Можно выбрать фото.');
+        }
+    }
+
+    async function scanFromFile(file) {
+        if (!file) return;
+        scanHint('Читаю QR…');
+        try {
+            const bitmap = await createImageBitmap(file);
+            const text = await decodeQr(bitmap, bitmap.width, bitmap.height, true);
+            if (bitmap.close) bitmap.close();
+            if (text) handleScanResult(text);
+            else scanHint('QR не найден на фото');
+        } catch (e) {
+            scanHint('Не удалось прочитать фото');
+        }
     }
 
     /* --------------------------------------------------------------- calls */
@@ -994,6 +1881,7 @@
         $('call-nick').textContent = peer;
         paintAvatar($('call-avatar'), peer);
         $('call-modal').hidden = false;
+        requestWakeLock();
         $('videos').classList.toggle('on', media === 'video');
         $('call-accept').hidden = !incoming;
         $('call-reject').hidden = !incoming;
@@ -1004,13 +1892,14 @@
         $('call-camera').textContent = 'Камера';
         $('call-volume-wrap').hidden = !!incoming;
         $('call-volume').value = 100;
-        $('remote-video').volume = 1;
-        $('remote-video').muted = false;
+        $('remote-audio').volume = 1;
+        $('remote-audio').muted = false;
+        $('remote-audio').play().catch(() => {});
         setCallStatus(incoming ? 'входящий звонок' : 'звоним…');
 
         if (incoming) {
             startRing();
-            notify('Входящий звонок', peer, 'call-' + peer);
+            notify('Входящий звонок', peer, 'call-' + peer, peer);
             clearTimeout(state.callTimeout);
             state.callTimeout = setTimeout(() => {
                 if (call.incoming && !call.active) {
@@ -1067,7 +1956,11 @@
             if (event.candidate) signal({ kind: 'ice', candidate: event.candidate });
         };
         pc.ontrack = (event) => {
-            $('remote-video').srcObject = event.streams[0];
+            const stream = event.streams[0] || new MediaStream([event.track]);
+            $('remote-video').srcObject = stream;
+            const audio = $('remote-audio');
+            audio.srcObject = stream;
+            audio.play().catch(() => {});
         };
         pc.onconnectionstatechange = () => {
             if (pc.connectionState === 'connected') {
@@ -1119,6 +2012,7 @@
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             signal({ kind: 'offer', media, sdp: pc.localDescription.sdp });
+            pushNotify(call.peer, 'Входящий звонок', 'call');
             setCallStatus('ждём ответа…');
             clearTimeout(state.callTimeout);
             state.callTimeout = setTimeout(() => {
@@ -1185,6 +2079,7 @@
         clearTimeout(state.callTimeout);
         state.callTimeout = 0;
         stopRing();
+        releaseWakeLock();
 
         $('call-modal').hidden = true;
         $('video-note').hidden = true;
@@ -1218,6 +2113,9 @@
         state.pendingCall = null;
         $('local-video').srcObject = null;
         $('remote-video').srcObject = null;
+        const remoteAudio = $('remote-audio');
+        remoteAudio.pause();
+        remoteAudio.srcObject = null;
     }
 
     async function handleSignal(from, data, fromUid, sid) {
@@ -1303,12 +2201,27 @@
             }
         });
 
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', (event) => {
+                const data = event.data || {};
+                if (data.type === 'pps-open' && data.nick) {
+                    openChat({ nick: data.nick, uid: null });
+                }
+            });
+        }
+
         $('qr-btn').addEventListener('click', openQr);
         $('empty-qr').addEventListener('click', openQr);
+        $('empty-scan').addEventListener('click', openScanner);
         $('empty-search').addEventListener('click', () => {
             $('search').focus();
             $('search').select();
         });
+        $('side-empty-search').addEventListener('click', () => {
+            $('search').focus();
+            $('search').select();
+        });
+        $('side-empty-scan').addEventListener('click', openScanner);
         $('qr-close').addEventListener('click', () => { $('qr-modal').hidden = true; });
         $('qr-copy').addEventListener('click', async () => {
             try {
@@ -1319,6 +2232,12 @@
                 $('qr-link').textContent = myLink();
             }
         });
+        $('qr-scan').addEventListener('click', openScanner);
+        $('scan-close').addEventListener('click', closeScanner);
+        $('scan-modal').addEventListener('click', (event) => {
+            if (event.target === $('scan-modal')) closeScanner();
+        });
+        $('scan-file').addEventListener('change', (event) => scanFromFile(event.target.files[0]));
 
         document.querySelectorAll('.tab').forEach((tab) => {
             tab.addEventListener('click', () => {
@@ -1329,7 +2248,22 @@
                     t.setAttribute('aria-selected', String(active));
                 });
                 $('auth-submit').textContent = state.authMode === 'login' ? 'Войти' : 'Создать аккаунт';
-                $('auth-pass').autocomplete = state.authMode === 'login' ? 'current-password' : 'new-password';
+                $('auth-title').textContent = state.authMode === 'login' ? 'Вход' : 'Регистрация';
+                const registering = state.authMode === 'register';
+                $('auth-confirm-field').hidden = !registering;
+                $('auth-confirm').required = registering;
+                $('auth-pass').autocomplete = registering ? 'new-password' : 'current-password';
+            });
+        });
+
+        document.querySelectorAll('.pass-eye').forEach((button) => {
+            button.addEventListener('click', () => {
+                const input = $(button.dataset.eye);
+                if (!input) return;
+                const show = input.type === 'password';
+                input.type = show ? 'text' : 'password';
+                button.classList.toggle('is-on', show);
+                button.setAttribute('aria-label', show ? 'Скрыть пароль' : 'Показать пароль');
             });
         });
 
@@ -1338,6 +2272,20 @@
             const nick = $('auth-nick').value.trim();
             const password = $('auth-pass').value;
             $('auth-error').hidden = true;
+
+            if (state.authMode === 'register') {
+                if (password.length < 6) {
+                    $('auth-error').textContent = 'Пароль должен быть от 6 символов.';
+                    $('auth-error').hidden = false;
+                    return;
+                }
+                if (password !== $('auth-confirm').value) {
+                    $('auth-error').textContent = 'Пароли не совпадают.';
+                    $('auth-error').hidden = false;
+                    return;
+                }
+            }
+
             $('auth-submit').disabled = true;
 
             if (USE_SUPABASE) {
@@ -1389,11 +2337,88 @@
         });
 
         $('composer').addEventListener('submit', submitMessage);
+        $('file-btn').addEventListener('click', () => $('file-input').click());
+        $('file-input').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            event.target.value = '';
+            uploadFile(file);
+        });
+        $('emoji-btn').addEventListener('click', (event) => {
+            event.stopPropagation();
+            const panel = $('emoji-panel');
+            const open = panel.hidden;
+            if (open) renderEmojiPanel();
+            panel.hidden = !open;
+            $('emoji-btn').setAttribute('aria-expanded', String(open));
+        });
+        $('emoji-panel').addEventListener('click', (event) => event.stopPropagation());
+        document.querySelectorAll('[data-emoji-tab]').forEach((button) => {
+            button.addEventListener('click', () => {
+                emojiTab = button.dataset.emojiTab;
+                document.querySelectorAll('[data-emoji-tab]').forEach((tab) => {
+                    tab.classList.toggle('is-active', tab === button);
+                });
+                renderEmojiPanel();
+            });
+        });
+        $('pack-add').addEventListener('click', addStickerPack);
+        $('pack-close').addEventListener('click', () => { $('pack-modal').hidden = true; });
+        $('pack-modal').addEventListener('click', (event) => {
+            if (event.target === $('pack-modal')) $('pack-modal').hidden = true;
+        });
         $('back-btn').addEventListener('click', closeChat);
         $('messages').addEventListener('scroll', updateScrollButton);
+        $('messages').addEventListener('click', (event) => {
+            const status = event.target.closest('.status.retry');
+            if (!status) return;
+            const id = status.dataset.retry;
+            const message = loadHistory(state.peer).find((item) => item.id === id);
+            if (message) retryMessage(message);
+        });
         $('scroll-bottom').addEventListener('click', () => {
             $('messages').scrollTop = $('messages').scrollHeight;
             updateScrollButton();
+        });
+
+        $('messages').addEventListener('contextmenu', (event) => {
+            const row = event.target.closest('.msg');
+            if (row && row._message) showMessageMenu(event, row._message);
+        });
+
+        let pressTimer = 0;
+        $('messages').addEventListener('touchstart', (event) => {
+            const row = event.target.closest('.msg');
+            if (!row || !row._message) return;
+            const touch = event.touches[0];
+            pressTimer = setTimeout(() => {
+                showMessageMenu({
+                    clientX: touch.clientX,
+                    clientY: touch.clientY,
+                    preventDefault() {},
+                }, row._message);
+            }, 500);
+        }, { passive: true });
+        ['touchend', 'touchmove', 'touchcancel'].forEach((name) => {
+            $('messages').addEventListener(name, () => clearTimeout(pressTimer), { passive: true });
+        });
+
+        $('message-menu').addEventListener('click', (event) => {
+            event.stopPropagation();
+            const button = event.target.closest('[data-msg-action]');
+            if (!button) return;
+            const action = button.dataset.msgAction;
+            const message = state.contextMessage;
+            if (!message) return;
+
+            if (action === 'copy') {
+                navigator.clipboard.writeText(message.text).then(() => showToast('Скопировано')).catch(() => {});
+                $('message-menu').hidden = true;
+                state.contextMessage = null;
+            } else if (action === 'delete-self') {
+                deleteContextMessage(false);
+            } else if (action === 'delete-all') {
+                deleteContextMessage(true);
+            }
         });
 
         document.addEventListener('keydown', (event) => {
@@ -1404,8 +2429,14 @@
                 $('search').focus();
             }
             if (event.key === 'Escape') {
-                if (!$('settings-modal').hidden) $('settings-modal').hidden = true;
+                if (!$('scan-modal').hidden) closeScanner();
+                else if (!$('settings-modal').hidden) $('settings-modal').hidden = true;
                 else if (!$('qr-modal').hidden) $('qr-modal').hidden = true;
+                else if (!$('pack-modal').hidden) $('pack-modal').hidden = true;
+                else if (!$('emoji-panel').hidden) {
+                    $('emoji-panel').hidden = true;
+                    $('emoji-btn').setAttribute('aria-expanded', 'false');
+                }
                 else if (!$('chat-menu').hidden) $('chat-menu').hidden = true;
                 else if (state.peer && window.matchMedia('(max-width: 760px)').matches) closeChat();
             }
@@ -1431,6 +2462,9 @@
         document.addEventListener('click', () => {
             $('chat-menu').hidden = true;
             $('chat-menu-btn').setAttribute('aria-expanded', 'false');
+            $('message-menu').hidden = true;
+            $('emoji-panel').hidden = true;
+            $('emoji-btn').setAttribute('aria-expanded', 'false');
         });
 
         document.addEventListener('visibilitychange', () => {
@@ -1470,8 +2504,8 @@
 
         $('call-volume').addEventListener('input', (event) => {
             const value = Number(event.target.value) / 100;
-            $('remote-video').volume = value;
-            $('remote-video').muted = value === 0;
+            $('remote-audio').volume = value;
+            $('remote-audio').muted = value === 0;
         });
 
         window.addEventListener('beforeunload', () => {
@@ -1634,6 +2668,7 @@
         subscribeSignals();
         startSignalPoll();
         startAllChatSync();
+        if (state.settings.notifications) initPush();
 
         const add = new URLSearchParams(location.search).get('add');
         if (add) openChat({ nick: add, uid: null });
@@ -1659,24 +2694,35 @@
         channel.on('presence', { event: 'sync' }, () => {
             const snapshot = channel.presenceState();
             const next = new Set();
+            const statuses = {};
             Object.keys(snapshot).forEach((key) => {
                 for (const entry of snapshot[key] || []) {
-                    if (entry && entry.nick && entry.uid !== state.sbUid) {
-                        next.add(String(entry.nick).toLowerCase());
-                    }
+                    if (!entry || !entry.nick || entry.uid === state.sbUid || entry.invisible) continue;
+                    const nick = String(entry.nick).toLowerCase();
+                    next.add(nick);
+                    if (entry.status) statuses[nick] = String(entry.status).slice(0, 40);
                 }
             });
             state.online = next;
+            state.statuses = statuses;
             renderPresence();
         });
 
-        channel.subscribe(async (status) => {
-            if (status === 'SUBSCRIBED') {
-                await channel.track({ uid: state.sbUid, nick: state.me.nick });
-            }
+        channel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') trackPresence();
         });
 
         state.presenceChannel = channel;
+
+        if (!state.presenceHooked) {
+            state.presenceHooked = true;
+            const retrack = () => {
+                if (document.visibilityState !== 'visible') return;
+                trackPresence();
+            };
+            document.addEventListener('visibilitychange', retrack);
+            window.addEventListener('focus', retrack);
+        }
     }
 
     function subscribeSignals() {
@@ -1698,6 +2744,12 @@
                 }
                 handleIncomingRow(payload.row, payload.fromNick);
             })
+            .on('broadcast', { event: 'message-deleted' }, ({ payload }) => {
+                handleDeleted(payload);
+            })
+            .on('broadcast', { event: 'chat-deleted' }, ({ payload }) => {
+                handleChatDeleted(payload);
+            })
             .subscribe();
     }
 
@@ -1712,6 +2764,19 @@
         return uid;
     }
 
+    async function uidForNick(nick) {
+        const key = String(nick || '').toLowerCase();
+        const known = state.chats.find((chat) => chat.nick.toLowerCase() === key && chat.uid);
+        if (known) return known.uid;
+        const { data } = await state.sb.from('profiles').select('id').ilike('nick', nick).maybeSingle();
+        if (data && data.id) {
+            const chat = state.chats.find((item) => item.nick.toLowerCase() === key);
+            if (chat) chat.uid = data.id;
+            return data.id;
+        }
+        return '';
+    }
+
     async function supabaseSearch(query) {
         if (!state.sb) return;
         const { data, error } = await state.sb
@@ -1722,9 +2787,11 @@
         if (error) {
             console.warn(error);
             state.search = [];
+            state.searchLoading = false;
             renderSearch();
             return;
         }
+        state.searchLoading = false;
         state.search = (data || [])
             .filter((user) => user.id !== state.sbUid)
             .map((user) => ({
@@ -1762,7 +2829,7 @@
             if (chatRecord) chatRecord.chatId = chatId;
             const { data: rows, error: loadError } = await state.sb
                 .from('messages')
-                .select('id,sender_id,body,client_id,created_at')
+                .select('*')
                 .eq('chat_id', chatId)
                 .order('created_at', { ascending: true })
                 .limit(200);
@@ -1773,7 +2840,14 @@
                 ? rows[rows.length - 1].created_at
                 : new Date(0).toISOString();
             if (chatRecord && state.chatLastTs) chatRecord.lastTs = state.chatLastTs;
-            saveHistory(peer.nick, mergeMessages(loadHistory(peer.nick), mapped));
+            const local = loadHistory(peer.nick);
+            const dbIds = new Set((rows || []).map((row) => row.id));
+            const keep = local.filter((message) => {
+                if (message.status === 'sending' || message.status === 'failed') return true;
+                if (!message.dbId) return true;
+                return dbIds.has(message.dbId);
+            });
+            saveHistory(peer.nick, mergeMessages(keep, mapped));
             renderMessages();
             renderChats();
             subscribeChat(chatId, peer.nick);
@@ -1797,6 +2871,12 @@
             .on('broadcast', { event: 'message' }, ({ payload }) => {
                 if (payload) handleIncomingRow(payload, peerNick);
             })
+            .on('broadcast', { event: 'message-deleted' }, ({ payload }) => {
+                handleDeleted(payload);
+            })
+            .on('broadcast', { event: 'chat-deleted' }, ({ payload }) => {
+                handleChatDeleted(payload);
+            })
             .subscribe((status) => {
                 if (status === 'SUBSCRIBED') supabaseSyncChat();
             });
@@ -1819,7 +2899,7 @@
         try {
             const { data, error } = await state.sb
                 .from('messages')
-                .select('id,sender_id,body,client_id,created_at')
+                .select('*')
                 .eq('chat_id', chatId)
                 .gt('created_at', since)
                 .order('created_at', { ascending: true })
@@ -1844,6 +2924,13 @@
             .select('chat_id')
             .eq('user_id', state.sbUid);
         if (error || !data) return;
+
+        const memberIds = new Set(data.map((row) => row.chat_id));
+        for (const chat of [...state.chats]) {
+            if (chat.chatId && !memberIds.has(chat.chatId)) {
+                removeChatLocal(chat.nick);
+            }
+        }
 
         const known = new Set(state.chats.map((chat) => chat.chatId).filter(Boolean));
         for (const row of data) {
@@ -1896,7 +2983,7 @@
                 const since = chat.lastTs || new Date(0).toISOString();
                 const { data, error } = await state.sb
                     .from('messages')
-                    .select('id,sender_id,body,client_id,created_at')
+                    .select('*')
                     .eq('chat_id', chat.chatId)
                     .gt('created_at', since)
                     .order('created_at', { ascending: true })
@@ -1919,6 +3006,12 @@
 
     function handleIncomingRow(row, peerNick) {
         if (metaFor(peerNick).blocked) return;
+        const messageId = row.client_id || row.id;
+        if (isLocallyDeleted(peerNick, messageId)) return;
+        if (row.deleted_for_all) {
+            removeMessageLocal(peerNick, messageId);
+            return;
+        }
         const hiddenAt = state.hiddenChats[peerNick];
         if (hiddenAt) {
             const messageAt = Date.parse(row.created_at) || 0;
@@ -1965,7 +3058,7 @@
         else if (isNew) {
             state.unread.set(peerNick, (state.unread.get(peerNick) || 0) + 1);
             if (message.from !== state.me.nick) {
-                notify('pps · ' + peerNick, message.text, 'msg-' + peerNick);
+                notify('pps · ' + peerNick, previewText(message.text), 'msg-' + peerNick, peerNick);
                 if (document.visibilityState !== 'visible' || !document.hasFocus()) beep(520, 0.07);
             }
         }
@@ -1976,6 +3069,7 @@
         const own = row.sender_id === state.sbUid;
         return {
             id: row.client_id || row.id,
+            dbId: row.id,
             from: own ? state.me.nick : peerNick,
             to: own ? peerNick : state.me.nick,
             text: row.body,
@@ -2020,13 +3114,34 @@
                 body: message.text,
                 client_id: message.id,
             })
-            .select('id,sender_id,body,client_id,created_at')
+            .select('*')
             .single();
 
+        if (error && error.code === '23505') {
+            const { data: existing } = await state.sb
+                .from('messages')
+                .select('*')
+                .eq('client_id', message.id)
+                .eq('sender_id', state.sbUid)
+                .maybeSingle();
+            if (existing) {
+                message.status = 'sent';
+                message.dbId = existing.id;
+                message.ts = Date.parse(existing.created_at) || message.ts;
+                saveHistory(state.peer, loadHistory(state.peer));
+                renderMessages();
+                return;
+            }
+        }
+
         message.status = error ? 'failed' : 'sent';
-        if (error) console.warn('send message', error);
+        if (error) {
+            console.warn('send message', error);
+            showToast('Не отправлено: ' + (error.message || error.code || 'ошибка'));
+        }
         if (!error && data) {
             message.ts = Date.parse(data.created_at) || message.ts;
+            message.dbId = data.id;
             if (state.chatChannel) {
                 state.chatChannel
                     .send({ type: 'broadcast', event: 'message', payload: data })
@@ -2040,6 +3155,7 @@
                     chatId: state.chatId,
                 }).catch(() => {});
             }
+            pushNotify(message.to, previewText(message.text), 'message');
         }
         saveHistory(state.peer, loadHistory(state.peer));
         renderMessages();
@@ -2083,9 +3199,13 @@
         }
 
         try {
-            await state.sb.rpc('send_signal', { p_to: uid, p_payload: payload });
+            await state.sb.from('signals').insert({
+                from_id: state.sbUid,
+                to_id: uid,
+                payload,
+            });
         } catch (e) {
-            /* SQL bridge may not be installed yet; Broadcast already tried. */
+            /* Broadcast already tried; DB copy is best-effort. */
         }
     }
 
@@ -2116,6 +3236,9 @@
     }
 
     async function supabaseSignal(data) {
+        if (!state.peerUid && call.peer) {
+            try { state.peerUid = await uidForNick(call.peer); } catch (e) { /* ignore */ }
+        }
         if (!state.peerUid) return;
         try {
             await sendSignalTo(state.peerUid, data);

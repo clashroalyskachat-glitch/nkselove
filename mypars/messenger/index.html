@@ -8,7 +8,7 @@
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#0e1621">
     <link rel="icon" href="../library/icon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="styles.css?v=3">
+    <link rel="stylesheet" href="styles.css?v=7">
     <script>
         (function () {
             try {
@@ -23,20 +23,15 @@
         })();
     </script>
 </head>
-<body>
+<body class="auth-locked">
+<div class="grain" aria-hidden="true"></div>
 
 <div class="app" id="app">
     <aside class="sidebar" id="sidebar">
         <header class="side-head">
             <a class="brand" href="/" title="В меню">
-                <span class="brand-logo" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M20.5 11.6c0 4-3.8 7.2-8.5 7.2-1 0-2-.2-2.9-.5L4 20.6l1.4-4A6.8 6.8 0 0 1 3.5 11.6C3.5 7.6 7.3 4.4 12 4.4s8.5 3.2 8.5 7.2z"/>
-                        <path d="M8.2 11.6h.1M12 11.6h.1M15.8 11.6h.1"/>
-                    </svg>
-                </span>
                 <span class="brand-text">
-                    <b>pps</b>
+                    <b>PPS</b>
                     <small>НКСЭ</small>
                 </span>
             </a>
@@ -97,9 +92,19 @@
             <div class="skeleton-row"><span class="skeleton-avatar"></span><span class="skeleton-lines"><i></i><i></i></span></div>
         </div>
 
+        <div class="side-empty" id="side-empty" hidden>
+            <div class="side-empty-orb" aria-hidden="true">?</div>
+            <b>Пока нет чатов</b>
+            <p>Найди друга по нику или отсканируй QR-код.</p>
+            <button class="primary" id="side-empty-search" type="button">Найти по нику</button>
+            <button class="ghost" id="side-empty-scan" type="button">Сканировать QR</button>
+        </div>
+
         <footer class="side-foot">
-            <span id="peer-count">0 онлайн</span>
-            <span class="conn-dot" id="conn-dot-side" title="Соединение"></span>
+            <span class="status-pill">
+                <span class="conn-dot" id="conn-dot-side" title="Соединение"></span>
+                <span id="peer-count">В сети</span>
+            </span>
         </footer>
     </aside>
 
@@ -116,6 +121,7 @@
             <div class="empty-actions">
                 <button class="primary" id="empty-search" type="button">Найти по нику</button>
                 <button class="ghost" id="empty-qr" type="button">Мой QR</button>
+                <button class="ghost" id="empty-scan" type="button">Сканировать</button>
             </div>
         </div>
 
@@ -155,19 +161,83 @@
             </button>
 
             <form class="composer" id="composer">
+                <button class="emoji-btn" id="file-btn" type="button" aria-label="Прикрепить файл">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>
+                </button>
+                <input id="file-input" type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.txt" hidden>
+                <button class="emoji-btn" id="emoji-btn" type="button" aria-label="Эмодзи" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 14.4c.9 1.2 2.1 1.9 3.5 1.9s2.6-.7 3.5-1.9"/><path d="M9 9.7h.01M15 9.7h.01"/></svg>
+                </button>
                 <input id="text" type="text" maxlength="4000" autocomplete="off" placeholder="Сообщение…" aria-label="Сообщение">
                 <button class="send" type="submit" aria-label="Отправить">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3L10.5 13.5M21 3l-7 18-3.5-7.5L3 10z"/></svg>
                 </button>
             </form>
+
+            <div class="emoji-panel" id="emoji-panel" hidden>
+                <div class="emoji-tabs">
+                    <button type="button" class="is-active" data-emoji-tab="emoji">Эмодзи</button>
+                    <button type="button" data-emoji-tab="sticker">Стикеры</button>
+                </div>
+                <div class="emoji-packs" id="emoji-packs" hidden></div>
+                <div class="emoji-grid" id="emoji-grid"></div>
+            </div>
         </section>
     </main>
 </div>
 
-<!-- Auth -->
-<div class="modal" id="auth-modal">
-    <div class="modal-card auth-card">
-        <div class="auth-brand">pps <span>НКСЭ</span></div>
+<div class="message-menu" id="message-menu" hidden role="menu">
+    <button type="button" data-msg-action="copy" role="menuitem">Копировать</button>
+    <button type="button" data-msg-action="delete-self" role="menuitem">Удалить у себя</button>
+    <button type="button" data-msg-action="delete-all" role="menuitem" class="danger">Удалить у всех</button>
+</div>
+
+<!-- Auth page -->
+<div class="auth-screen" id="auth-modal">
+    <div class="auth-deco" aria-hidden="true">
+        <div class="auth-space">
+            <span class="space-nebula neb-a"></span>
+            <span class="space-nebula neb-b"></span>
+            <span class="space-nebula neb-c"></span>
+            <span class="space-stars stars-far"></span>
+            <span class="space-stars stars-mid"></span>
+            <span class="space-stars stars-near"></span>
+            <span class="space-stars stars-faint"></span>
+            <div class="space-hole">
+                <span class="hole-glow"></span>
+                <span class="hole-disk"></span>
+                <span class="hole-core"></span>
+            </div>
+            <span class="space-planet planet-a"></span>
+            <span class="space-planet planet-b"></span>
+            <span class="space-shoot shoot-a"></span>
+            <span class="space-shoot shoot-b"></span>
+            <span class="space-shoot shoot-c"></span>
+            <span class="space-dust dust-a"></span>
+            <span class="space-dust dust-b"></span>
+            <span class="space-dust dust-c"></span>
+            <span class="space-dust dust-d"></span>
+        </div>
+
+        <div class="auth-float float-a">
+            <span class="af-avatar">?</span>
+            <span class="af-lines"><i></i><i></i></span>
+        </div>
+        <div class="auth-float float-b own">
+            <span class="af-lines"><i></i><i></i></span>
+            <span class="af-check">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4 4 10-10"/></svg>
+            </span>
+        </div>
+
+    </div>
+
+    <a class="auth-back" href="/">← В меню</a>
+
+    <div class="auth-panel">
+        <div class="auth-brand">PPS</div>
+        <div class="auth-sub">НКСЭ</div>
+        <h1 id="auth-title">Вход</h1>
         <div class="tabs" role="tablist">
             <button class="tab is-active" data-mode="login" type="button" role="tab" aria-selected="true">Войти</button>
             <button class="tab" data-mode="register" type="button" role="tab" aria-selected="false">Регистрация</button>
@@ -179,7 +249,23 @@
             </label>
             <label class="field">
                 <span>Пароль</span>
-                <input id="auth-pass" name="password" type="password" maxlength="100" autocomplete="current-password" required>
+                <span class="pass-wrap">
+                    <input id="auth-pass" name="password" type="password" maxlength="100" autocomplete="current-password" required>
+                    <button class="pass-eye" type="button" data-eye="auth-pass" aria-label="Показать пароль">
+                        <svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                        <svg class="eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.2A10.6 10.6 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-3.1 3.7M6.2 6.7C3.8 8.4 2.5 12 2.5 12s3.5 6 9.5 6c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+                    </button>
+                </span>
+            </label>
+            <label class="field" id="auth-confirm-field" hidden>
+                <span>Пароль ещё раз</span>
+                <span class="pass-wrap">
+                    <input id="auth-confirm" name="password2" type="password" maxlength="100" autocomplete="new-password">
+                    <button class="pass-eye" type="button" data-eye="auth-confirm" aria-label="Показать пароль">
+                        <svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                        <svg class="eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.2A10.6 10.6 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-3.1 3.7M6.2 6.7C3.8 8.4 2.5 12 2.5 12s3.5 6 9.5 6c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+                    </button>
+                </span>
             </label>
             <p class="form-error" id="auth-error" hidden></p>
             <button class="primary wide" id="auth-submit" type="submit">Войти</button>
@@ -196,6 +282,46 @@
         <div class="qr-box" id="qr-box"></div>
         <div class="qr-link" id="qr-link"></div>
         <button class="primary wide" id="qr-copy" type="button">Скопировать ссылку</button>
+        <button class="ghost wide" id="qr-scan" type="button">Сканировать QR</button>
+    </div>
+</div>
+
+<!-- Scanner -->
+<div class="modal" id="scan-modal" hidden>
+    <div class="modal-card scan-card">
+        <button class="modal-close" id="scan-close" type="button" aria-label="Закрыть">×</button>
+        <h2>Сканировать QR</h2>
+        <div class="scan-stage">
+            <video id="scan-video" playsinline muted></video>
+            <span class="scan-frame" aria-hidden="true"></span>
+        </div>
+        <p class="scan-hint" id="scan-hint">Наведи камеру на QR-код</p>
+        <label class="ghost wide scan-file">
+            Выбрать фото
+            <input id="scan-file" type="file" accept="image/*" hidden>
+        </label>
+    </div>
+</div>
+
+<!-- Sticker pack -->
+<div class="modal" id="pack-modal" hidden>
+    <div class="modal-card pack-card">
+        <button class="modal-close" id="pack-close" type="button" aria-label="Закрыть">×</button>
+        <h2>Добавить стикеры</h2>
+        <label class="field">
+            <span>Название пака</span>
+            <input id="pack-name" type="text" maxlength="40" placeholder="Например: Котики">
+        </label>
+        <label class="field">
+            <span>Пак из Telegram</span>
+            <input id="pack-link" type="text" placeholder="t.me/addstickers/..." autocomplete="off">
+        </label>
+        <label class="field">
+            <span>Или ссылки на картинки</span>
+            <textarea id="pack-urls" rows="3" placeholder="https://...png"></textarea>
+        </label>
+        <p class="form-error" id="pack-error" hidden></p>
+        <button class="primary wide" id="pack-add" type="button">Добавить пак</button>
     </div>
 </div>
 
@@ -208,10 +334,11 @@
             <small id="call-status">звоним…</small>
         </div>
         <div class="videos" id="videos">
-            <video id="remote-video" autoplay playsinline></video>
+            <video id="remote-video" autoplay playsinline muted></video>
             <video id="local-video" autoplay playsinline muted></video>
             <div class="video-note" id="video-note" hidden>Камера недоступна</div>
         </div>
+        <audio id="remote-audio" autoplay playsinline></audio>
         <div class="call-actions">
             <button class="call-btn accept" id="call-accept" type="button" hidden>Принять</button>
             <button class="call-btn reject" id="call-reject" type="button">Отклонить</button>
@@ -247,10 +374,19 @@
                 <button type="button" data-accent-choice="amber" aria-label="Янтарный"></button>
             </div>
         </div>
+        <label class="status-row">
+            <span>Статус</span>
+            <input id="set-status" type="text" maxlength="40" placeholder="Например: на парах" autocomplete="off">
+        </label>
+        <label class="switch-row">
+            <span>Скрывать, что я в сети</span>
+            <input type="checkbox" id="set-invisible">
+        </label>
         <label class="switch-row">
             <span>Уведомления</span>
             <input type="checkbox" id="set-notifications">
         </label>
+        <button class="push-test" id="push-test" type="button">Проверить уведомление</button>
         <label class="switch-row">
             <span>Не беспокоить</span>
             <input type="checkbox" id="set-dnd">
@@ -270,8 +406,8 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="config.js?v=3"></script>
-<script src="qrcode.js?v=3"></script>
-<script src="app.js?v=3"></script>
+<script src="config.js?v=7"></script>
+<script src="qrcode.js?v=7"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
