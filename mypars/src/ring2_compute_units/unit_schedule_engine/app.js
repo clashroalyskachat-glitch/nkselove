@@ -522,7 +522,43 @@ const CARD_ACCENTS = [
      currentDayFilter = (todayName && todayName !== 'Воскресенье') ? todayName : 'Понедельник';
      initUI();
      loadSchedule();
+     sendVisitBeacon();
  }
+
+/* ---------- статистика посещений ----------
+   Один POST на вкладку: домен и анонимный id устройства. Сбой сети или
+   отсутствие эндпоинта ничего не ломают — счётчик молча пропускается. */
+const NKSE_STATS_API = 'https://script.google.com/macros/s/AKfycbyLgfwIeyM6irptQU_4I3giVfX2AO0wPCnkGtMRa_GrKBHGdUu9n23u0YEnOA7WtG1z/exec';
+
+function sendVisitBeacon() {
+    try {
+        // локальные прогоны и предпросмотр не считаем
+        if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return;
+        if (sessionStorage.getItem('nkse-visit')) return;
+        sessionStorage.setItem('nkse-visit', '1');
+
+        let vid = localStorage.getItem('nkse-vid');
+        if (!vid) {
+            vid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+            localStorage.setItem('nkse-vid', vid);
+        }
+
+        fetch(NKSE_STATS_API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+                board: 'stats',
+                op: 'hit',
+                host: location.hostname,
+                vid: vid,
+                page: location.pathname,
+            }),
+            keepalive: true,
+        }).catch(() => {});
+    } catch (e) {
+        /* приватный режим и т.п. — просто без статистики */
+    }
+}
 
  if (document.readyState === 'loading') {
      document.addEventListener('DOMContentLoaded', init);
@@ -812,7 +848,18 @@ renderTabs();
           // No cache-busting query on the normal path: the service worker is
 // network-first, so freshness is unaffected, and a stable URL lets the HTTP
 // cache help when the server allows it.
-const res = await fetch(forceRefresh ? `schedule.json?_t=${Date.now()}` : 'schedule.json', { cache: forceRefresh ? 'reload' : 'default' });
+let res = await fetch(forceRefresh ? `schedule.json?_t=${Date.now()}` : 'schedule.json', { cache: forceRefresh ? 'reload' : 'default' });
+
+          // Firebase-зеркало иногда теряет файлы при деплое: если данные не
+          // пришли, берём их с GitHub Pages, а не показываем ошибку.
+          if (!res.ok && location.hostname.endsWith('web.app')) {
+              console.warn('[NKSE] schedule.json недоступен локально, беру зеркало GitHub');
+              res = await fetch(
+                  'https://clashroalyskachat-glitch.github.io/mypars/schedule.json?_t=' + Date.now(),
+                  { cache: 'reload' }
+              );
+          }
+
           if (!res.ok) throw new Error('Не удалось загрузить schedule.json');
           
           // Keep the response text as the cache value: parsing it once and
