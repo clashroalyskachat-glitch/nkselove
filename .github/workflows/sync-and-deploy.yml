@@ -45,14 +45,11 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Выложить на Firebase Hosting
-        # При плановом прогоне выкладываем только когда файлы реально поменялись,
-        # иначе это 288 пустых деплоев в сутки.
-        if: github.event_name != 'schedule' || steps.commit.outputs.changed == 'true'
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          projectId: nkselove
-          channelId: live
-          entryPoint: .
+      # Firebase-деплой убран специально.
+      #
+      # В этом репозитории лежит только меню и старый /mypars. Его деплой
+      # затирал полный layout (меню + актуальное расписание + мессенджер),
+      # который собирает репозиторий sz-schedule. Именно из-за этого
+      # расписание периодически отдавало 404.
+      #
+      # Живой сайт nkselove.web.app теперь обновляется только из sz-schedule.
