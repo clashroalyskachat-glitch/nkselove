@@ -4,6 +4,27 @@ let allGroupsData = {};
 /* Firebase-версия не хранит расписание: данные всегда берутся с GitHub Pages.
  * Локальный schedule.json остаётся только офлайн-фолбэком. */
 const REMOTE_SCHEDULE = 'https://clashroalyskachat-glitch.github.io/mypars/schedule.json';
+/* Маленький файл рядом: updated_at — когда таблица реально изменилась,
+ * checked_at — когда парсер последний раз проверил сайт колледжа. */
+const REMOTE_META = 'https://clashroalyskachat-glitch.github.io/mypars/schedule-meta.json';
+
+/* Поведение из панели настроек. Ключи читает и settings.js. */
+const PREF_NOW_BAR = 'nkse-pref-now-bar';
+const PREF_NOW_ENDED = 'nkse-pref-now-ended';
+const PREF_HIDE_PAST = 'nkse-pref-hide-past';
+function readPrefBool(key, fallback) {
+    try {
+        const v = localStorage.getItem(key);
+        return v === null ? fallback : v === '1';
+    } catch (e) {
+        return fallback;
+    }
+}
+let showNowBar = readPrefBool(PREF_NOW_BAR, true);
+/* «На сегодня пары закончились» по умолчанию не показываем: это статус,
+ * а не полезная информация. Включается галочкой в настройках. */
+let showNowEnded = readPrefBool(PREF_NOW_ENDED, false);
+let hidePastLessons = readPrefBool(PREF_HIDE_PAST, false);
 let currentGroup = localStorage.getItem('selected_group') || 'СЗ-13-26';
 let currentDayFilter = 'all';
 let lastModTime = null;
@@ -108,18 +129,74 @@ function togglePin() {
 // "Обновление на сервере: 02.10.2026 в 20:44" -> "Обновлено 02.10 · 20:44".
 // Accepts either ms or s; anything falsy means "we do not know yet".
 function formatUpdatedLabel(modTime) {
-    if (!modTime) return 'Обновляется каждые 6 часов';
+    if (!modTime) return 'Обновляется каждые 10 минут';
     const ms = modTime < 1e11 ? modTime * 1000 : modTime;
     const d = new Date(ms);
-    if (isNaN(d.getTime())) return 'Обновляется каждые 6 часов';
+    if (isNaN(d.getTime())) return 'Обновляется каждые 10 минут';
     const date = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
     const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     return `Обновлено ${date} · ${time}`;
 }
 
-function setUpdatedLabel(modTime) {
+function formatClock(ms) {
+    const d = new Date(ms);
+    if (isNaN(d.getTime())) return '';
+    const date = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+    const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    return `${date} · ${time}`;
+}
+
+function isNarrowHeader() {
+    return typeof window.matchMedia === 'function'
+        && window.matchMedia('(max-width: 639px)').matches;
+}
+
+// На телефоне полная дата не влезает в шапку. Если проверка была сегодня —
+// показываем только время, иначе оставляем дату, чтобы не соврать.
+function shortClock(ms) {
+    const d = new Date(ms);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    const sameDay =
+        d.getFullYear() === now.getFullYear() &&
+        d.getMonth() === now.getMonth() &&
+        d.getDate() === now.getDate();
+    if (!sameDay) return formatClock(ms);
+    return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+let _labelModTime = null;
+let _labelCheckedAt = null;
+
+// В шапке показываем «Проверено ЧЧ:ММ» — это время последней проверки сайта
+// колледжа, оно двигается каждые 10 минут. Когда именно менялись сами данные —
+// в подсказке (и это же время уходит в offline-кэш).
+function setUpdatedLabel(modTime, checkedAt) {
+    _labelModTime = modTime || null;
+    _labelCheckedAt = checkedAt || null;
     const el = document.getElementById('last-updated');
-    if (el) el.textContent = formatUpdatedLabel(modTime);
+    if (!el) return;
+    if (checkedAt) {
+        const clock = isNarrowHeader() ? shortClock(checkedAt) : formatClock(checkedAt);
+        el.textContent = 'Проверено ' + clock;
+        el.title = modTime ? 'Данные обновлены ' + formatClock(modTime) : '';
+    } else {
+        el.textContent = formatUpdatedLabel(modTime);
+        el.removeAttribute('title');
+    }
+    // На телефоне подсказка недоступна (нет hover), поэтому время изменения
+    // самой таблицы дублируем в подвале.
+    const dataTime = document.getElementById('data-time');
+    if (dataTime) {
+        dataTime.textContent = modTime ? 'Данные обновлены ' + formatClock(modTime) : '';
+    }
+}
+
+// Поворот телефона/ресайз окна: пересобрать подпись в нужном формате.
+if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('resize', () => {
+        if (_labelCheckedAt || _labelModTime) setUpdatedLabel(_labelModTime, _labelCheckedAt);
+    });
 }
 
 function renderPinButton() {
@@ -659,11 +736,17 @@ function initUI() {
     syncPickerModes();
 
     syncHeaderOffset();
-    window.addEventListener('resize', syncHeaderOffset);
+    // ResizeObserver уже ловит изменение высоты шапки (в т.ч. при ресайзе
+    // окна и загрузке шрифта) — отдельный resize-слушатель только зря читал
+    // layout на каждое движение окна.
     if (typeof ResizeObserver === 'function') {
         new ResizeObserver(syncHeaderOffset).observe(document.querySelector('header'));
     }
 }
+
+/* Последняя отрисованная полоса дней: фоновые обновления расписания не должны
+ * пересобирать те же 7 кнопок (и сбрасывать золотую капсулу). */
+let _tabsHtml = '';
 
  function renderTabs() {
      const tabsContainer = document.getElementById('days-tabs');
@@ -672,12 +755,16 @@ function initUI() {
      var activeText = isDark ? 'text-purple-400 border-purple-400' : 'text-white';
      var inactiveText = isDark ? 'text-gray-400' : 'text-slate-600';
      var todayName = JS_DAYS_MAP[new Date().getDay()];
-     tabsContainer.innerHTML = DAYS_OF_WEEK.map(day => `
+     const html = DAYS_OF_WEEK.map(day => `
          <button onclick="filterDay('${day.id}')" 
              class="day-tab whitespace-nowrap transition-all duration-300 flex-shrink-0 font-bold ${currentDayFilter === day.id ? activeBg + ' ' + activeText + ' day-tab-active' : inactiveText}">
              ${day.id === todayName ? '<span class="tab-today-dot" title="Сегодня"></span>' : ''}${day.name}
          </button>
      `).join('');
+
+     if (html === _tabsHtml) return;
+     _tabsHtml = html;
+     tabsContainer.innerHTML = html;
 
      setTimeout(() => {
          const activeTab = tabsContainer.querySelector(`button[onclick="filterDay('${currentDayFilter}')"]`);
@@ -727,13 +814,47 @@ function syncHeaderOffset() {
 let _versionPromise = null;
 function fetchScheduleVersion() {
     if (!_versionPromise) {
-        _versionPromise = fetch(REMOTE_SCHEDULE, { method: 'HEAD', cache: 'no-store' })
-            .then((res) => {
+        _versionPromise = (async () => {
+            // Основной путь: крошечный schedule-meta.json. updated_at меняется
+            // только вместе с данными, поэтому 600-КБ таблица не скачивается
+            // заново на каждой проверке.
+            let metaStatus = 0;
+            try {
+                const ctrl = new AbortController();
+                const timer = setTimeout(() => ctrl.abort(), 1200);
+                const res = await fetch(REMOTE_META + '?v=' + Date.now(), {
+                    cache: 'no-store',
+                    signal: ctrl.signal,
+                });
+                clearTimeout(timer);
+                metaStatus = res.status;
+                if (res.ok) {
+                    const meta = await res.json();
+                    if (meta && meta.updated_at) {
+                        return {
+                            mod_time: Number(meta.updated_at),
+                            checked_at: Number(meta.checked_at) || 0,
+                        };
+                    }
+                }
+            } catch (e) {
+                // Медленный GitHub не должен задерживать загрузку самой таблицы.
+                return null;
+            }
+
+            // Фолбэк, если meta ещё не задеплоена (404).
+            if (metaStatus !== 404) return null;
+            try {
+                const res = await fetch(REMOTE_SCHEDULE, { method: 'HEAD', cache: 'no-store' });
                 if (!res.ok) return null;
                 const lastModified = res.headers.get('Last-Modified');
-                return lastModified ? { mod_time: Date.parse(lastModified) } : null;
-            })
-            .catch(() => null);
+                return lastModified
+                    ? { mod_time: Date.parse(lastModified), checked_at: 0 }
+                    : null;
+            } catch (e) {
+                return null;
+            }
+        })();
         // let a later poll ask GitHub again
         setTimeout(() => { _versionPromise = null; }, 60 * 1000);
     }
@@ -768,8 +889,9 @@ function paintHotSlice() {
         renderPinButton();
         renderTabs();
         renderSchedule();
-        markStaleness(slice.t || null, true);
-        setUpdatedLabel(slice.t || null);
+        const checkedAt = parseInt(localStorage.getItem('nkse-checked-at') || '0', 10);
+        markStaleness(checkedAt || slice.t || null, true);
+        setUpdatedLabel(slice.t || null, checkedAt || 0);
     } catch (e) {
         return false;
     }
@@ -806,11 +928,19 @@ function saveHotSlice() {
      const CACHE_VER_KEY = 'nkse-cache-ver';
      const CACHE_DURATION = 60 * 60 * 1000; // 60 minutes
 
-     // Fetch server mod_time
+     // Fetch server mod_time (когда изменились данные) и checked_at
+     // (когда парсер последний раз проверял источник).
      let serverModTime = null;
+     let serverCheckedAt = 0;
      try {
          const infoData = await fetchScheduleVersion();
-         if (infoData) serverModTime = infoData.mod_time;
+         if (infoData) {
+             serverModTime = infoData.mod_time;
+             serverCheckedAt = infoData.checked_at || 0;
+             if (serverCheckedAt) {
+                 try { localStorage.setItem('nkse-checked-at', String(serverCheckedAt)); } catch (e) {}
+             }
+         }
      } catch (e) {}
 
      // Check cache first
@@ -830,8 +960,12 @@ function saveHotSlice() {
                 checkAndAutoSwitchDay();
 
 const cachedFileMtime = localStorage.getItem('nkse-file-mtime');
-                  markStaleness(cachedFileMtime ? parseInt(cachedFileMtime) : null, true);
-                  setUpdatedLabel(cachedFileMtime ? parseInt(cachedFileMtime) : serverModTime);
+                  const cachedCheckedAt = parseInt(localStorage.getItem('nkse-checked-at') || '0', 10);
+                  markStaleness(cachedCheckedAt || (cachedFileMtime ? parseInt(cachedFileMtime) : null), true);
+                  setUpdatedLabel(
+                      cachedFileMtime ? parseInt(cachedFileMtime) : serverModTime,
+                      cachedCheckedAt || serverCheckedAt
+                  );
                   
 renderTabs();
                  renderSchedule();
@@ -877,10 +1011,12 @@ renderTabs();
           const rawText = await res.text();
           allGroupsData = JSON.parse(rawText);
           
-          // Get last-modified from headers
-          let fileModTime = null;
+          // Время изменения данных берём из schedule-meta.json; Last-Modified
+          // остаётся фолбэком (и меняется при каждом деплое Pages, поэтому
+          // показывать его как «обновлено» нельзя).
+          let fileModTime = serverModTime || null;
           const lastModified = res.headers.get('Last-Modified');
-          if (lastModified) {
+          if (!fileModTime && lastModified) {
               fileModTime = new Date(lastModified).getTime();
           }
           
@@ -896,8 +1032,8 @@ renderTabs();
           renderDataHealth();
           checkAndAutoSwitchDay();
 
-          markStaleness(fileModTime || null, false);
-          setUpdatedLabel(fileModTime || serverModTime);
+          markStaleness(serverCheckedAt || fileModTime || null, false);
+          setUpdatedLabel(fileModTime || serverModTime, serverCheckedAt);
           
 renderTabs();
          renderSchedule();
@@ -1108,6 +1244,10 @@ function teacherLessonCount(name) {
 
 let allGroupList = [];
 let groupCursor = -1;
+/* Подпись последнего отрисованного списка групп/преподавателей: повторное
+ * открытие панели без смены фильтра/режима не пересобирает 150+ кнопок. */
+let _optionsKey = '';
+let _optionsSource = null;
 
 function updatePickerLabel() {
     const label = document.getElementById('group-trigger-label');
@@ -1163,7 +1303,10 @@ function populateGroupSelect() {
 
     updatePickerLabel();
     syncPickerModes();
-    renderGroupOptions('');
+    // 150 кнопок нужны только когда панель реально открыта; при открытии
+    // setGroupPickerOpen сам вызывает renderGroupOptions.
+    const picker = document.getElementById('group-picker');
+    if (picker && picker.classList.contains('is-open')) renderGroupOptions('');
 }
 
 function renderGroupOptions(filter) {
@@ -1177,6 +1320,13 @@ function renderGroupOptions(filter) {
     const items = q ? source.filter((x) => x.toLowerCase().includes(q)) : source;
 
     groupCursor = items.indexOf(selected);
+
+    // Тот же список уже в DOM — не пересобираем (открытие/закрытие панели,
+    // повторный вызов после выбора группы и т.п.).
+    const key = `${pickerMode}|${q}|${items.length}|${selected}|${source === _optionsSource ? 1 : 0}`;
+    if (key === _optionsKey) return;
+    _optionsKey = key;
+    _optionsSource = source;
 
     if (items.length === 0) {
         list.innerHTML = '<div class="group-opt" aria-disabled="true">Ничего не найдено</div>';
@@ -1476,7 +1626,10 @@ function fmtLeft(mins) {
     return `${h} ч ${m} мин`;
 }
 
-const STALE_AFTER_MS = 6 * 60 * 60 * 1000; // match the cloud re-parse cadence
+// Парсер проверяет источник каждые 10 минут днём. Если checked_at не
+// обновлялся два часа — что-то действительно сломалось (Actions/CDN), а не
+// просто «расписание не менялось».
+const STALE_AFTER_MS = 2 * 60 * 60 * 1000;
 
 function markStaleness(modTimeMs, fromCache) {
     const dot = document.getElementById('stale-dot');
@@ -1578,11 +1731,33 @@ function nextLessonHint() {
     return parts.join(' · ');
 }
 
+/* Последняя отрисовка «сейчас идёт»: перерисовка раз в 30 секунд с тем же
+ * содержимым перезапускала пульсацию точки и вызывала лишний reflow. */
+let _nowPaint = '';
+
+function paintNowBar(bar, cls, html) {
+    const key = cls + '|' + html;
+    if (key === _nowPaint) return;
+    _nowPaint = key;
+    bar.className = cls;
+    bar.hidden = false;
+    bar.innerHTML = html;
+}
+
+function hideNowBar(bar) {
+    bar.hidden = true;
+    _nowPaint = '';
+}
+
 function renderNowBar() {
     const bar = document.getElementById('now-bar');
     if (!bar) return;
+    if (!showNowBar) {
+        hideNowBar(bar);
+        return;
+    }
     if (!viewHasData()) {
-        bar.hidden = true;
+        hideNowBar(bar);
         return;
     }
 
@@ -1593,16 +1768,14 @@ function renderNowBar() {
 
     if (!todayName || lessons.length === 0) {
         const hint = nextLessonHint();
-        if (!hint) {
-            bar.hidden = true;
+        if (!hint || !showNowEnded) {
+            hideNowBar(bar);
             return;
         }
-        bar.hidden = false;
-        bar.className = 'now-bar is-free';
-        bar.innerHTML = `
+        paintNowBar(bar, 'now-bar is-free', `
             <span class="now-dot"></span>
             <span>Сегодня пар нет</span>
-            <span class="now-left">${escapeHtml(hint)}</span>`;
+            <span class="now-left">${escapeHtml(hint)}</span>`);
         return;
     }
 
@@ -1614,14 +1787,12 @@ function renderNowBar() {
     if (live) {
         const r = parseLessonRange(live.time);
         const liveRoom = lessonRoomsText(live);
-        bar.hidden = false;
-        bar.className = 'now-bar is-live';
-        bar.innerHTML = `
+        paintNowBar(bar, 'now-bar is-live', `
             <span class="now-dot"></span>
             <span><b>Идёт сейчас:</b> ${escapeHtml(live.subject || '')}</span>
             ${viewMode === 'teacher' ? `<span>${escapeHtml(lessonGroupsWithRooms(live))}</span>` : ''}
             ${viewMode !== 'teacher' && liveRoom ? `<span>Каб: ${escapeHtml(liveRoom)}</span>` : ''}
-            <span class="now-left">до ${String(Math.floor(r.end / 60)).padStart(2, '0')}:${String(r.end % 60).padStart(2, '0')} · осталось ${fmtLeft(r.end - cur)}</span>`;
+            <span class="now-left">до ${String(Math.floor(r.end / 60)).padStart(2, '0')}:${String(r.end % 60).padStart(2, '0')} · осталось ${fmtLeft(r.end - cur)}</span>`);
         return;
     }
 
@@ -1633,23 +1804,26 @@ function renderNowBar() {
     if (next) {
         const r = parseLessonRange(next.time);
         const nextRoom = lessonRoomsText(next);
-        bar.hidden = false;
-        bar.className = 'now-bar is-free';
-        bar.innerHTML = `
+        paintNowBar(bar, 'now-bar is-free', `
             <span class="now-dot"></span>
             <span><b>Следующая пара</b> в ${String(Math.floor(r.start / 60)).padStart(2, '0')}:${String(r.start % 60).padStart(2, '0')}</span>
             <span>${escapeHtml(next.subject || '')}</span>
             ${viewMode === 'teacher' ? `<span>${escapeHtml(lessonGroupsWithRooms(next))}</span>` : ''}
             ${viewMode !== 'teacher' && nextRoom ? `<span>Каб: ${escapeHtml(nextRoom)}</span>` : ''}
-            <span class="now-left">через ${fmtLeft(r.start - cur)}</span>`;
+            <span class="now-left">через ${fmtLeft(r.start - cur)}</span>`);
         return;
     }
 
+    // Пар больше нет: по умолчанию плашку не показываем, чтобы не мозолила
+    // глаза. Включается галочкой «Показывать „пары закончились“».
+    if (!showNowEnded) {
+        hideNowBar(bar);
+        return;
+    }
     const hint = nextLessonHint();
-    bar.hidden = false;
-    bar.className = 'now-bar is-free';
-    bar.innerHTML = `<span class="now-dot"></span><span>На сегодня пары закончились</span>` +
-        (hint ? `<span class="now-left">${escapeHtml(hint)}</span>` : '');
+    paintNowBar(bar, 'now-bar is-free',
+        `<span class="now-dot"></span><span>На сегодня пары закончились</span>` +
+        (hint ? `<span class="now-left">${escapeHtml(hint)}</span>` : ''));
 }
 
 function initNowBar() {
@@ -1974,14 +2148,21 @@ function renderSchedule() {
     const todayName = JS_DAYS_MAP[todayJsDay];
 
     daysToDisplay.forEach(dayName => {
-        const lessons = groupSchedule[dayName] || [];
-        totalLessonsCount += lessons.length;
-        
-        if (currentDayFilter === 'all' && lessons.length === 0) {
+        const allLessons = groupSchedule[dayName] || [];
+        totalLessonsCount += allLessons.length;
+
+        const isToday = (dayName === todayName);
+        // «Скрывать прошедшие пары» действует только на сегодня: прошлые дни
+        // в режиме «вся неделя» остаются как были.
+        const lessons = hidePastLessons && isToday
+            ? allLessons.filter((l) => !isLessonPassed(l.time, dayName))
+            : allLessons;
+        const hiddenPast = allLessons.length - lessons.length;
+
+        if (currentDayFilter === 'all' && lessons.length === 0 && !hiddenPast) {
             return;
         }
 
-        const isToday = (dayName === todayName);
         const dayLabelBadge = getRelativeDayLabel(dayName);
         const subCount = lessons.filter((l) => l.substituted).length;
 
@@ -2005,7 +2186,7 @@ function renderSchedule() {
                 </div>
                 <div class="stack flex-grow">
                     ${lessons.length === 0 ? `
-                        <p class="fs-meta text-slate-400 dark:text-slate-500 text-center py-8 font-bold">Выходной день ☕</p>
+                        <p class="fs-meta text-slate-400 dark:text-slate-500 text-center py-8 font-bold">${hiddenPast ? 'На сегодня пары закончились' : 'Выходной день ☕'}</p>
                     ` : lessons.map((lesson, idx) => {
                         const active = isLessonActive(lesson.time, dayName);
                         const passed = isLessonPassed(lesson.time, dayName);
@@ -2109,6 +2290,14 @@ function checkForUpdates(once) {
     fetchScheduleVersion()
         .then((data) => {
             if (!data || !data.mod_time) return;
+
+            // «Проверено ЧЧ:ММ» должно тикать, даже если расписание не менялось:
+            // обновляем подпись на каждой успешной проверке.
+            if (data.checked_at) {
+                try { localStorage.setItem('nkse-checked-at', String(data.checked_at)); } catch (e) {}
+                setUpdatedLabel(data.mod_time, data.checked_at);
+            }
+
             const next = parseFloat(data.mod_time);
             const prev = lastModTime ? parseFloat(lastModTime) : null;
 
@@ -2147,6 +2336,15 @@ function revalidateOnReturn() {
 
 document.addEventListener('visibilitychange', revalidateOnReturn);
 window.addEventListener('focus', revalidateOnReturn);
+
+// Настройки поведения из панели применяются сразу, без перезагрузки.
+window.addEventListener('nkse-prefs-changed', () => {
+    showNowBar = readPrefBool(PREF_NOW_BAR, true);
+    showNowEnded = readPrefBool(PREF_NOW_ENDED, false);
+    hidePastLessons = readPrefBool(PREF_HIDE_PAST, false);
+    renderNowBar();
+    renderSchedule();
+});
 // телефон вышел из тоннеля
 window.addEventListener('online', revalidateOnReturn);
 // возврат из bfcache (Safari/Chrome восстанавливают страницу без DOMContentLoaded)

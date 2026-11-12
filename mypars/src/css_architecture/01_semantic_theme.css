@@ -405,7 +405,9 @@ html[data-theme="dark"] #theme-toggle .theme-icon-moon { display: none; }
 .settings-scrim {
     position: absolute;
     inset: 0;
-    background: rgba(15, 23, 42, 0.14);
+    background: rgba(8, 8, 10, 0.32);
+    opacity: 0;
+    transition: opacity .24s ease;
 }
 
 .settings-drawer {
@@ -419,6 +421,71 @@ html[data-theme="dark"] #theme-toggle .theme-icon-moon { display: none; }
     color: var(--t-text);
     border-left: 1px solid var(--t-border);
     box-shadow: -22px 0 60px -30px rgba(0, 0, 0, 0.55);
+    /* выезд справа: только transform/opacity, без layout */
+    transform: translateX(100%);
+    transition: transform .3s cubic-bezier(.22, .8, .24, 1);
+    will-change: transform;
+}
+
+#settings-panel.is-open .settings-scrim { opacity: 1; }
+#settings-panel.is-open .settings-drawer { transform: translateX(0); }
+
+@media (prefers-reduced-motion: reduce) {
+    .settings-scrim,
+    .settings-drawer { transition: none; }
+}
+
+/* ---- разделы настроек: быстрый переход ---- */
+.settings-nav {
+    flex: 0 0 auto;
+    display: flex;
+    gap: .35rem;
+    padding: .5rem clamp(.9rem, .7rem + .5vw, 1.25rem);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    border-bottom: 1px solid var(--t-border);
+    background: var(--t-surface);
+    scroll-snap-type: x proximity;
+}
+.settings-nav::-webkit-scrollbar { display: none; }
+.settings-nav.is-stuck { box-shadow: 0 10px 22px -24px rgba(0, 0, 0, .95); }
+
+.settings-nav-chip {
+    flex: 0 0 auto;
+    font: inherit;
+    font-size: var(--fs-badge);
+    font-weight: 800;
+    color: var(--t-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    padding: .34rem .7rem;
+    cursor: pointer;
+    scroll-snap-align: start;
+    transition: color .16s ease, background-color .16s ease, border-color .16s ease;
+}
+.settings-nav-chip:hover { color: var(--t-text); background: var(--t-chip-bg); }
+.settings-nav-chip.is-active {
+    color: var(--t-accent);
+    background: var(--t-accent-soft);
+    border-color: var(--t-accent-border);
+}
+
+/* перебиваем глобальный «все кнопки тёмные» из старой темы */
+html[data-theme] #settings-panel .settings-nav-chip {
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    color: var(--t-muted) !important;
+}
+html[data-theme] #settings-panel .settings-nav-chip:hover {
+    background: var(--t-chip-bg) !important;
+    color: var(--t-text) !important;
+}
+html[data-theme] #settings-panel .settings-nav-chip.is-active {
+    background: var(--t-accent-soft) !important;
+    border-color: var(--t-accent-border) !important;
+    color: var(--t-accent) !important;
 }
 
 .settings-head,
@@ -439,12 +506,25 @@ html[data-theme="dark"] #theme-toggle .theme-icon-moon { display: none; }
 
 .settings-foot {
     border-top: 1px solid var(--t-border);
+    padding-bottom: max(0.9rem, env(safe-area-inset-bottom));
 }
 
 .settings-head h2 {
     font-size: var(--fs-title);
     font-weight: 800;
     letter-spacing: -0.02em;
+}
+
+.settings-head-text { min-width: 0; }
+
+.settings-sub {
+    margin-top: .15rem;
+    font-size: var(--fs-badge);
+    font-weight: 600;
+    opacity: .55;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .settings-body {
@@ -484,7 +564,20 @@ html[data-theme="dark"] #theme-toggle .theme-icon-moon { display: none; }
     font-weight: 800;
     letter-spacing: 0.02em;
     opacity: .85;
+    display: flex;
+    align-items: center;
+    gap: .45rem;
 }
+
+.settings-ico {
+    display: inline-flex;
+    flex: 0 0 auto;
+    opacity: .6;
+}
+.settings-ico svg { display: block; }
+
+/* чтобы раздел не прятался под липкой строкой вкладок */
+.settings-group { scroll-margin-top: .6rem; }
 
 .settings-hint {
     font-size: var(--fs-badge);
@@ -726,12 +819,13 @@ html[data-theme] #settings-panel .preset-card.is-active {
     cursor: pointer;
     border: 1px solid var(--t-soft-border);
     border-radius: var(--radius-xs);
-    padding: 0.5rem 0.55rem;
+    padding: 0.45rem;
     background: transparent;
     color: var(--t-text);
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.4rem;
     min-width: 0;
 }
 
@@ -744,13 +838,63 @@ html[data-theme] #settings-panel .preset-card.is-active {
     box-shadow: 0 0 0 1px var(--t-accent) inset;
 }
 
-.preset-swatch {
-    width: 1.5rem;
-    height: 1.5rem;
-    border-radius: 50%;
-    flex: 0 0 auto;
-    border: 1px solid var(--t-soft-border);
-    background: linear-gradient(135deg, var(--sw-bg, #000) 0 50%, var(--sw-surface, #111) 50% 100%);
+/* Мини-превью темы: фон + карточка пары + акцентная полоса + строки текста.
+   Сразу видно характер темы, а не белый кружок. */
+.preset-preview {
+    position: relative;
+    display: block;
+    height: 3.4rem;
+    border-radius: calc(var(--radius-sm) * 0.55);
+    background: var(--p-bg, #111111);
+    border: 1px solid rgba(127, 127, 127, 0.22);
+    overflow: hidden;
+}
+
+.pp-accent {
+    position: absolute;
+    left: 0.45rem;
+    top: 0.5rem;
+    bottom: 0.5rem;
+    width: 0.3rem;
+    border-radius: 999px;
+    background: var(--p-accent, #c99a63);
+}
+
+.pp-card {
+    position: absolute;
+    left: 1.05rem;
+    right: 0.45rem;
+    top: 0.5rem;
+    bottom: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.28rem;
+    padding: 0.45rem 0.5rem;
+    border-radius: 0.35rem;
+    background: var(--p-surface, #1a1a1a);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.pp-line {
+    display: block;
+    width: 68%;
+    height: 0.22rem;
+    border-radius: 999px;
+    background: var(--p-text, #ffffff);
+    opacity: 0.55;
+}
+
+.pp-line.is-short {
+    width: 42%;
+    opacity: 0.28;
+}
+
+.preset-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 0;
 }
 
 .preset-name {
@@ -963,21 +1107,27 @@ html[data-style="hub"][data-theme="light"] {
 
 html[data-style="hub"][data-theme][data-bg="none"] body.app-body {
     background-color: var(--t-bg) !important;
+    /* Тёплый вечерний свет: мягкое янтарное пятно сверху, прохладный
+       отблеск снизу и деликатное затемнение по краям — уютнее, чем
+       просто чёрный фон. */
     background-image:
-        radial-gradient(138% 108% at 50% 32%, transparent 40%, rgba(0, 0, 0, .66) 100%),
-        radial-gradient(118% 92% at 88% -12%, rgba(158, 88, 40, .38), transparent 56%),
-        radial-gradient(102% 84% at 5% 108%, rgba(50, 72, 110, .26), transparent 62%),
-        linear-gradient(178deg, #0a0a0d 0%, #08080a 48%, #060608 100%) !important;
+        radial-gradient(120% 80% at 50% -18%, rgba(214, 168, 110, .10), transparent 62%),
+        radial-gradient(110% 85% at 86% 2%, rgba(190, 118, 58, .24), transparent 58%),
+        radial-gradient(95% 75% at 8% 104%, rgba(72, 92, 128, .20), transparent 62%),
+        radial-gradient(140% 110% at 50% 38%, transparent 42%, rgba(0, 0, 0, .58) 100%),
+        linear-gradient(178deg, #0d0b0a 0%, #0a0908 48%, #070606 100%) !important;
     background-size: cover !important;
     background-attachment: fixed !important;
 }
 
 html[data-style="hub"][data-theme="light"][data-bg="none"] body.app-body {
+    /* Светлая тема: тёплая бумага с персиковым светом и лёгкой прохладой. */
     background-image:
-        radial-gradient(138% 108% at 50% 32%, transparent 44%, rgba(70, 50, 28, .18) 100%),
-        radial-gradient(118% 92% at 88% -12%, rgba(198, 148, 94, .34), transparent 56%),
-        radial-gradient(102% 84% at 5% 108%, rgba(108, 128, 164, .22), transparent 62%),
-        linear-gradient(178deg, #f3efe8 0%, #ece7de 48%, #e5dfd5 100%) !important;
+        radial-gradient(120% 80% at 50% -18%, rgba(255, 255, 255, .55), transparent 60%),
+        radial-gradient(110% 85% at 86% 2%, rgba(212, 160, 104, .26), transparent 58%),
+        radial-gradient(95% 75% at 8% 104%, rgba(118, 138, 172, .16), transparent 62%),
+        radial-gradient(140% 110% at 50% 38%, transparent 52%, rgba(92, 70, 44, .10) 100%),
+        linear-gradient(178deg, #f7f3ec 0%, #f0eae0 48%, #e9e2d6 100%) !important;
 }
 
 /* медленный тёплый отсвет поверх полотна — как на стартовой странице */
@@ -1008,22 +1158,23 @@ html[data-style="hub"][data-theme] footer.shell {
     z-index: 1;
 }
 
-/* плёночное зерно поверх всего полотна */
+/* плёночное зерно поверх всего полотна.
+   Раньше здесь был mix-blend-mode: overlay/multiply — браузер пересмешивал
+   весь экран на каждом кадре скролла. Зерно осталось тем же, но теперь это
+   обычный полупрозрачный слой: дешевле и без «дрожания» фона. */
 html[data-style="hub"][data-theme]::after {
     content: "";
     position: fixed;
     inset: 0;
     z-index: 6;
     pointer-events: none;
-    opacity: .055;
-    mix-blend-mode: overlay;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity: .05;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
     background-size: 180px 180px;
 }
 
 html[data-style="hub"][data-theme="light"]::after {
-    mix-blend-mode: multiply;
-    opacity: .04;
+    opacity: .035;
 }
 
 /* ---------------------------------------------------- 3. шапка */

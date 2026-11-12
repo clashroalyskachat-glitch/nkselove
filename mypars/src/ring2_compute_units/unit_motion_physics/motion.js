@@ -133,3 +133,141 @@
         });
     }, true);
 })();
+
+/*
+ * Плавное колесо мыши — только на ПК.
+ *
+ * Нативный wheel в Windows прыгает сразу на ~100 px. Здесь мы копим цель и
+ * догоняем её через rAF с экспоненциальным сглаживанием (~65 мс). Это не
+ * «инерция на полсекунды»: движение заканчивается примерно за 200 мс, поэтому
+ * нет ощущения задержки ввода.
+ *
+ * Телефоны, планшеты и тачпады не трогаем — у них уже есть нативный
+ * инерционный скролл. Внутренние списки (группы, поиск, настройки) и
+ * горизонтальные вкладки тоже остаются нативными.
+ */
+(function () {
+    'use strict';
+
+    if (typeof window === 'undefined' || !window.requestAnimationFrame) return;
+    // Только точный указатель (мышь). Телефоны/планшеты не трогаем.
+    // prefers-reduced-motion здесь намеренно не проверяем: это не декоративная
+    // анимация, а короткое (≈200 мс) сглаживание прямого управления скроллом.
+    if (!(window.matchMedia && window.matchMedia('(pointer: fine)').matches)) return;
+
+    var SCROLLERS = '.group-list, #search-results, .settings-body, #days-tabs';
+    var EASE_MS = 65; // меньше — резче, больше — «плывёт»
+    var PREF_KEY = 'nkse-pref-smooth-wheel';
+
+    var enabled = true;
+    try {
+        if (localStorage.getItem(PREF_KEY) === '0') enabled = false;
+    } catch (e) { /* приватный режим */ }
+
+    var target = window.scrollY || 0;
+    var current = target;
+    var raf = 0;
+    var last = 0;
+
+    function stopAnim() {
+        if (raf) {
+            cancelAnimationFrame(raf);
+            raf = 0;
+        }
+    }
+
+    function maxY() {
+        var doc = document.documentElement;
+        return Math.max(0, doc.scrollHeight - window.innerHeight);
+    }
+
+    function clampY(y) {
+        var m = maxY();
+        return y < 0 ? 0 : (y > m ? m : y);
+    }
+
+    function inNativeScroller(node) {
+        return !!(node && node.closest && node.closest(SCROLLERS));
+    }
+
+    function tick(now) {
+        var dt = now - last;
+        last = now;
+        if (!(dt > 0)) dt = 16;
+        if (dt > 64) dt = 64;
+
+        current += (target - current) * (1 - Math.exp(-dt / EASE_MS));
+
+        if (Math.abs(target - current) < 0.5) {
+            current = target;
+            window.scrollTo(0, current);
+            raf = 0;
+            return;
+        }
+        window.scrollTo(0, current);
+        raf = requestAnimationFrame(tick);
+    }
+
+    // Настройки — фиксированная панель поверх страницы. Колесо внутри её
+    // списка оставляем нативным, а над шапкой/фоном не даём прокручивать
+    // страницу под панелью.
+    function modalOpen() {
+        var panel = document.getElementById('settings-panel');
+        return !!(panel && !panel.hidden);
+    }
+
+    window.addEventListener('wheel', function (event) {
+        if (!enabled) return;
+        if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+        if (modalOpen()) {
+            if (!(event.target && event.target.closest && event.target.closest('.settings-body'))) {
+                event.preventDefault();
+            }
+            return;
+        }
+        if (inNativeScroller(event.target)) return;
+
+        var dy = event.deltaY;
+        if (!dy) return;
+        if (event.deltaMode === 1) dy *= 16;
+        else if (event.deltaMode === 2) dy *= window.innerHeight;
+
+        // Мелкие дельты — тачпад или хвост инерции: там нативный скролл уже
+        // плавный, не вмешиваемся.
+        if (Math.abs(dy) < 24) return;
+
+        // Горизонтальный жест не перехватываем.
+        if (Math.abs(event.deltaX) > Math.abs(dy)) return;
+
+        event.preventDefault();
+
+        if (!raf) {
+            current = window.scrollY || 0;
+            target = current;
+            last = performance.now();
+        }
+        target = clampY(target + dy);
+        if (!raf) raf = requestAnimationFrame(tick);
+    }, { passive: false });
+
+    // Любой не-колёсный скролл (клавиатура, скроллбар, якорь) синхронизируем,
+    // чтобы следующий щелчок колеса не прыгал назад.
+    window.addEventListener('scroll', function () {
+        if (raf) return;
+        target = current = window.scrollY || 0;
+    }, { passive: true });
+
+    window.addEventListener('resize', function () {
+        target = clampY(target);
+        current = clampY(current);
+    }, { passive: true });
+
+    // Переключатель из настроек: выключаем сглаживание без перезагрузки.
+    window.NKSEScroll = {
+        setEnabled: function (v) {
+            enabled = !!v;
+            if (!enabled) stopAnim();
+        },
+        isEnabled: function () { return enabled; }
+    };
+})();
