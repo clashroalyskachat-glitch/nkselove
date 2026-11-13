@@ -21,9 +21,14 @@
     function box(container, el) {
         var c = container.getBoundingClientRect();
         var r = el.getBoundingClientRect();
+        // Полоса дней на телефоне прокручивается по горизонтали. Позиция
+        // капсулы задаётся внутри самой полосы, поэтому к координатам
+        // относительно окна нужно добавить scrollLeft/scrollTop и убрать
+        // рамку контейнера. Без этого капсула улетала мимо вкладки ровно
+        // на величину прокрутки.
         return {
-            left: r.left - c.left,
-            top: r.top - c.top,
+            left: r.left - c.left - container.clientLeft + container.scrollLeft,
+            top: r.top - c.top - container.clientTop + container.scrollTop,
             width: r.width,
             height: r.height
         };
@@ -112,6 +117,16 @@
                 var midLeft = from.left + (to.left - from.left) * lag;
                 var midRight = fromRight + (toRight - fromRight) * lead;
 
+                // «Вода»: в середине полёта капсула чуть сужается, а не
+                // растягивается в длинную колбасу. Сужение ограничено,
+                // чтобы на коротком переходе между соседними днями оно
+                // оставалось едва заметным.
+                var midWidth = midRight - midLeft;
+                var pinch = Math.min(18, midWidth * 0.12);
+                var midCenter = (midLeft + midRight) / 2;
+                midLeft = midCenter - (midWidth - pinch) / 2;
+                midRight = midCenter + (midWidth - pinch) / 2;
+
                 anim = pill.animate([
                     {
                         left: from.left + 'px',
@@ -126,8 +141,8 @@
                         top: from.top + 'px',
                         width: (midRight - midLeft) + 'px',
                         height: from.height + 'px',
-                        transform: 'scaleY(.93)',
-                        borderRadius: '44% / 52%',
+                        transform: 'scaleY(.88)',
+                        borderRadius: '46% / 54%',
                         offset: 0.5
                     },
                     {
@@ -139,7 +154,7 @@
                         borderRadius: '999px'
                     }
                 ], {
-                    duration: 620 * animSpeed,
+                    duration: 760 * animSpeed,
                     easing: 'cubic-bezier(.32, .82, .24, 1)',
                     fill: 'forwards'
                 });
