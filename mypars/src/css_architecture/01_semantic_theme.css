@@ -843,11 +843,20 @@ html[data-theme] #settings-panel .preset-card.is-active {
 .preset-preview {
     position: relative;
     display: block;
-    height: 3.4rem;
+    height: 3.9rem;
     border-radius: calc(var(--radius-sm) * 0.55);
     background: var(--p-bg, #111111);
     border: 1px solid rgba(127, 127, 127, 0.22);
     overflow: hidden;
+}
+
+.preset-preview.has-photo {
+    background-size: cover;
+    background-position: center;
+}
+
+.preset-preview.has-photo .pp-card {
+    background: color-mix(in srgb, var(--p-surface, #111111) 84%, transparent);
 }
 
 .pp-accent {
@@ -869,8 +878,8 @@ html[data-theme] #settings-panel .preset-card.is-active {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 0.28rem;
-    padding: 0.45rem 0.5rem;
+    gap: 0.24rem;
+    padding: 0.4rem 0.5rem;
     border-radius: 0.35rem;
     background: var(--p-surface, #1a1a1a);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
@@ -885,9 +894,32 @@ html[data-theme] #settings-panel .preset-card.is-active {
     opacity: 0.55;
 }
 
+.pp-line.pp-time {
+    width: 28%;
+    height: 0.16rem;
+    opacity: 0.32;
+}
+
+.pp-line.pp-subject {
+    width: 74%;
+    height: 0.28rem;
+    opacity: 0.78;
+}
+
 .pp-line.is-short {
-    width: 42%;
+    width: 44%;
     opacity: 0.28;
+}
+
+.pp-pill {
+    position: absolute;
+    right: 0.45rem;
+    bottom: 0.45rem;
+    width: 1.1rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--p-accent, #c99a63);
+    opacity: 0.55;
 }
 
 .preset-foot {
@@ -1107,27 +1139,25 @@ html[data-style="hub"][data-theme="light"] {
 
 html[data-style="hub"][data-theme][data-bg="none"] body.app-body {
     background-color: var(--t-bg) !important;
-    /* Тёплый вечерний свет: мягкое янтарное пятно сверху, прохладный
-       отблеск снизу и деликатное затемнение по краям — уютнее, чем
-       просто чёрный фон. */
+    /* Спокойный графит: нейтральная основа, очень мягкий тёплый свет
+       сверху и такой же мягкий холодный — снизу. Без тяжёлой виньетки,
+       чтобы фон не выглядел грязным пятном. */
     background-image:
-        radial-gradient(120% 80% at 50% -18%, rgba(214, 168, 110, .10), transparent 62%),
-        radial-gradient(110% 85% at 86% 2%, rgba(190, 118, 58, .24), transparent 58%),
-        radial-gradient(95% 75% at 8% 104%, rgba(72, 92, 128, .20), transparent 62%),
-        radial-gradient(140% 110% at 50% 38%, transparent 42%, rgba(0, 0, 0, .58) 100%),
-        linear-gradient(178deg, #0d0b0a 0%, #0a0908 48%, #070606 100%) !important;
+        radial-gradient(120% 70% at 50% -18%, rgba(255, 246, 232, .055), transparent 62%),
+        radial-gradient(90% 65% at 88% 0%, rgba(201, 154, 99, .12), transparent 58%),
+        radial-gradient(85% 65% at 6% 104%, rgba(86, 112, 150, .10), transparent 62%),
+        linear-gradient(178deg, #0a0a0c 0%, #08080a 52%, #060607 100%) !important;
     background-size: cover !important;
     background-attachment: fixed !important;
 }
 
 html[data-style="hub"][data-theme="light"][data-bg="none"] body.app-body {
-    /* Светлая тема: тёплая бумага с персиковым светом и лёгкой прохладой. */
+    /* Светлая тема: чистая тёплая бумага, без жёлтых разводов. */
     background-image:
-        radial-gradient(120% 80% at 50% -18%, rgba(255, 255, 255, .55), transparent 60%),
-        radial-gradient(110% 85% at 86% 2%, rgba(212, 160, 104, .26), transparent 58%),
-        radial-gradient(95% 75% at 8% 104%, rgba(118, 138, 172, .16), transparent 62%),
-        radial-gradient(140% 110% at 50% 38%, transparent 52%, rgba(92, 70, 44, .10) 100%),
-        linear-gradient(178deg, #f7f3ec 0%, #f0eae0 48%, #e9e2d6 100%) !important;
+        radial-gradient(120% 70% at 50% -18%, rgba(255, 255, 255, .60), transparent 60%),
+        radial-gradient(90% 65% at 88% 0%, rgba(214, 166, 110, .16), transparent 58%),
+        radial-gradient(85% 65% at 6% 104%, rgba(120, 140, 175, .10), transparent 62%),
+        linear-gradient(178deg, #f6f2ea 0%, #f0ebe2 52%, #eae4d9 100%) !important;
 }
 
 /* медленный тёплый отсвет поверх полотна — как на стартовой странице */
@@ -1270,13 +1300,31 @@ html[data-style="hub"][data-theme] #days-tabs .day-tab:hover:not(.day-tab-active
 }
 
 html[data-style="hub"][data-theme] #days-tabs .day-tab.day-tab-active {
-    background: linear-gradient(168deg, var(--hub-brass-lite) 0%, var(--t-accent) 52%, var(--hub-brass-deep) 100%) !important;
+    background: linear-gradient(
+        168deg,
+        color-mix(in srgb, var(--t-accent) 55%, #fff) 0%,
+        var(--t-accent) 48%,
+        color-mix(in srgb, var(--t-accent) 72%, #000) 100%
+    ) !important;
     border-color: var(--hub-line-strong) !important;
     color: var(--t-accent-contrast) !important;
     box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, .45),
+        inset 0 1px 0 rgba(255, 255, 255, .50),
         0 12px 24px -14px rgba(0, 0, 0, .95),
-        0 0 0 1px color-mix(in srgb, var(--t-accent) 20%, transparent) !important;
+        0 0 20px color-mix(in srgb, var(--t-accent) 42%, transparent),
+        0 0 0 1px color-mix(in srgb, var(--t-accent) 22%, transparent) !important;
+}
+
+/* Активная вкладка не «тускнеет» после полёта капсулы: по золотому стилю
+   по ней медленно течёт тот же блик, что и у капсулы. */
+html[data-anim="gold"][data-motion="on"] #days-tabs .day-tab-active {
+    background-size: 200% 100% !important;
+    animation: tab-shimmer 7s linear infinite;
+}
+
+@keyframes tab-shimmer {
+    from { background-position: 0% 50%; }
+    to   { background-position: 200% 50%; }
 }
 
 html[data-style="hub"][data-theme] #days-tabs .tab-today-dot {
