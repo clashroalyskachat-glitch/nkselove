@@ -135,27 +135,47 @@ html[data-glow="on"] #days-tabs .day-tab-active {
     box-shadow: 0 0 calc(var(--t-glow, 0) * 1px) var(--t-accent-border) !important;
 }
 
-/* theme-specific decoration for the Akashi preset (and copies of it) */
-html[data-fx="akashi"] header {
-    border-bottom: 2px solid var(--t-accent) !important;
+/* Акаши: снова сочный градиент, но без тени и фильтра — чтобы не ломалось
+   при масштабировании. «Э» — ровный красный акцент. */
+html[data-fx="akashi"] .brand-word {
+    font-weight: 800;
+    letter-spacing: .06em;
+    color: transparent !important;
+    -webkit-text-fill-color: transparent;
+    text-shadow: none !important;
+    background-image: linear-gradient(180deg, #ffffff 0%, #ffe9ec 40%, #ff0038 78%, #8a0018 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: none !important;
 }
-html[data-fx="akashi"] footer {
-    border-top: 1px solid var(--t-accent) !important;
+
+html[data-fx="akashi"] .brand-word .accent {
+    color: #ff2e4d !important;
+    -webkit-text-fill-color: #ff2e4d;
+    text-shadow: none !important;
+    background: none !important;
+    filter: none !important;
 }
-html[data-fx="akashi"] .brand-word::before {
-    content: '♛';
-    color: var(--t-warning);
-    font-size: 0.74em;
-    margin-right: 0.16em;
-    transform: translateY(-0.12em);
-    text-shadow: 0 0 10px var(--t-accent-border);
+
+/* Неон: то же самое, только акцент бирюзовый. */
+html[data-fx="neon"] .brand-word {
+    font-weight: 800;
+    letter-spacing: .02em;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff;
+    text-shadow: none !important;
+    background: none !important;
+    filter: none !important;
 }
-html[data-fx="akashi"] .meta-item.is-room::after {
-    content: '♛';
-    color: var(--t-warning);
-    font-size: 0.86em;
-    margin-left: 0.35em;
+
+html[data-fx="neon"] .brand-word .accent {
+    color: #22d3ee !important;
+    -webkit-text-fill-color: #22d3ee;
+    text-shadow: none !important;
+    background: none !important;
+    filter: none !important;
 }
+
 .footer-tagline {
     display: none;
     margin-top: 0.6rem;
@@ -166,8 +186,6 @@ html[data-fx="akashi"] .meta-item.is-room::after {
     opacity: .55;
     user-select: none;
 }
-html[data-fx="akashi"] .footer-tagline { display: block; }
-
 /* ---- day tabs ---- */
 
 html[data-theme] #days-tabs {
@@ -308,6 +326,22 @@ html[data-theme] .brand-word .accent {
         2px 2px 0 color-mix(in srgb, var(--t-accent) 90%, transparent),
         3px 3px 0 color-mix(in srgb, var(--t-accent) 65%, #000),
         4px 6px 8px color-mix(in srgb, var(--t-accent) 40%, transparent) !important;
+}
+
+/* Глобальная 3D-тень выше перебивала настройку и вешала на «Э» объём.
+   Для минималистичных тем акцент — просто ровный цвет. */
+html[data-theme][data-fx="akashi"] .brand-word .accent {
+    color: #ff2e4d !important;
+    -webkit-text-fill-color: #ff2e4d;
+    text-shadow: none !important;
+    background: none !important;
+}
+
+html[data-theme][data-fx="neon"] .brand-word .accent {
+    color: #22d3ee !important;
+    -webkit-text-fill-color: #22d3ee;
+    text-shadow: none !important;
+    background: none !important;
 }
 
 html[data-theme] .sub-flag,
@@ -1311,7 +1345,7 @@ html[data-style="hub"][data-theme] #days-tabs .day-tab.day-tab-active {
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, .50),
         0 12px 24px -14px rgba(0, 0, 0, .95),
-        0 0 20px color-mix(in srgb, var(--t-accent) 42%, transparent),
+        0 0 14px color-mix(in srgb, var(--t-accent) 40%, transparent),
         0 0 0 1px color-mix(in srgb, var(--t-accent) 22%, transparent) !important;
 }
 
@@ -1984,4 +2018,100 @@ html[data-style="hub"][data-theme] :focus-visible {
 @media (max-width: 639px) {
     .header-brand { flex: 0 1 auto; }
     .menu-pill { margin-left: auto; }
+}
+
+/* ---- вертикальная панель на ПК: слева или справа ---- */
+@media (min-width: 900px) {
+    html[data-nav="left"] body.app-body { padding-left: 86px; }
+    html[data-nav="right"] body.app-body { padding-right: 86px; }
+
+    html[data-nav="left"] header,
+    html[data-nav="right"] header {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        height: 100dvh;
+        width: 86px;
+        border-bottom: 0;
+        z-index: 70;
+    }
+    html[data-nav="left"] header { left: 0; border-right: 1px solid var(--t-border); }
+    html[data-nav="right"] header { right: 0; border-left: 1px solid var(--t-border); }
+
+    html[data-nav="left"] header .shell,
+    html[data-nav="right"] header .shell {
+        height: 100%;
+        max-width: none;
+        padding: .7rem .45rem;
+        flex-direction: column;
+        align-items: stretch;
+        gap: .55rem;
+    }
+
+    html[data-nav="left"] .header-main,
+    html[data-nav="right"] .header-main {
+        flex-direction: column;
+        align-items: stretch;
+        gap: .55rem;
+        height: 100%;
+    }
+
+    html[data-nav="left"] .header-brand,
+    html[data-nav="right"] .header-brand {
+        flex: 0 0 auto;
+        flex-direction: column;
+        align-items: center;
+        gap: .3rem;
+    }
+    html[data-nav="left"] .header-brand > div,
+    html[data-nav="right"] .header-brand > div { display: none; }
+
+    html[data-nav="left"] .brand-word,
+    html[data-nav="right"] .brand-word { font-size: 1.05rem; }
+
+    html[data-nav="left"] .menu-pill,
+    html[data-nav="right"] .menu-pill {
+        justify-content: center;
+        padding: .45rem;
+    }
+    html[data-nav="left"] .menu-pill span,
+    html[data-nav="right"] .menu-pill span { display: none; }
+
+    html[data-nav="left"] .header-controls,
+    html[data-nav="right"] .header-controls {
+        flex-direction: column;
+        align-items: center;
+        gap: .5rem;
+        margin-top: auto;
+        margin-left: 0;
+    }
+
+    html[data-nav="left"] .group-picker,
+    html[data-nav="right"] .group-picker { width: 100%; }
+
+    html[data-nav="left"] .group-trigger,
+    html[data-nav="right"] .group-trigger {
+        width: 100%;
+        padding: .4rem .25rem;
+        font-size: 10px;
+        justify-content: center;
+    }
+    html[data-nav="left"] .group-trigger .group-chevron,
+    html[data-nav="right"] .group-trigger .group-chevron { display: none; }
+
+    html[data-nav="left"] .group-panel {
+        left: calc(100% + .5rem);
+        right: auto;
+        top: auto;
+        bottom: 0;
+    }
+    html[data-nav="right"] .group-panel {
+        right: calc(100% + .5rem);
+        left: auto;
+        top: auto;
+        bottom: 0;
+    }
+
+    /* шапка больше не занимает верх — вкладки дней липнут к верху окна */
+    html[data-nav] { --header-h: 0px !important; }
 }

@@ -97,7 +97,22 @@
         /* auto — стиль из темы; gold/glow/soft/none — ручной выбор */
         animStyle: 'auto',
         /* множитель длительности: 1.3 медленно, 1 обычно, 0.75 быстро */
-        animSpeed: 1
+        animSpeed: 1,
+        /* положение панели на ПК: сверху / слева / справа */
+        navPos: 'top'
+    };
+
+    /* Шрифты заголовков. Все — системные: ничего не скачивается, поэтому
+       выбор шрифта не влияет на загрузку сайта вообще. */
+    var FONT_FAMILIES = {
+        sans: 'inherit',
+        humanist: "'Segoe UI', system-ui, -apple-system, sans-serif",
+        serif: "Georgia, 'Times New Roman', 'Noto Serif', serif",
+        display: "'Palatino Linotype', 'Book Antiqua', Georgia, serif",
+        rounded: "'Trebuchet MS', 'Segoe UI', sans-serif",
+        candara: "Candara, 'Segoe UI', sans-serif",
+        condensed: "'Arial Narrow', 'Segoe UI', sans-serif",
+        mono: "'Cascadia Code', Consolas, 'JetBrains Mono', monospace"
     };
 
     var COLOR_VARS = {
@@ -259,19 +274,20 @@
             id: 'neon',
             name: 'Неон',
             mode: 'dark',
-            anim: 'glow',
+            fx: 'neon',
+            anim: 'soft',
             colors: {
                 bg: '#05010f', surface: '#080315', surface2: '#0d0620', text: '#f5f3ff',
                 muted: '#a99fca', accent: '#22d3ee', accentContrast: '#041016',
-                border: 'rgba(34,211,238,0.35)', borderStrong: 'rgba(34,211,238,0.65)',
-                softBorder: 'rgba(34,211,238,0.28)', warning: '#fb7185',
-                lessonBg: '#080315', lessonBgHover: '#0b0420', lessonBorder: 'rgba(34,211,238,0.30)',
-                roomBorder: 'rgba(34,211,238,0.40)', tabBg: '#080315', tabPillBg: '#080315',
-                tabPillBorder: 'rgba(34,211,238,0.45)', tabActiveBg: 'transparent',
+                border: 'rgba(34,211,238,0.16)', borderStrong: 'rgba(34,211,238,0.38)',
+                softBorder: 'rgba(34,211,238,0.14)', warning: '#fb7185',
+                lessonBg: '#080315', lessonBgHover: '#0b0420', lessonBorder: 'rgba(34,211,238,0.12)',
+                roomBorder: 'rgba(34,211,238,0.30)', tabBg: '#080315', tabPillBg: '#080315',
+                tabPillBorder: 'rgba(34,211,238,0.24)', tabActiveBg: 'transparent',
                 tabActiveText: '#22d3ee', tabActiveBorder: '#22d3ee', headerBg: '#05010f',
                 footerBg: '#05010f', chipBg: 'rgba(34,211,238,0.10)', nowBg: '#080315'
             },
-            metrics: { radius: 18, glow: 10 }
+            metrics: { radius: 18, glow: 0 }
         },
         {
             id: 'calm',
@@ -294,7 +310,7 @@
             name: 'Акаши',
             mode: 'dark',
             fx: 'akashi',
-            anim: 'glow',
+            anim: 'soft',
             colors: {
                 bg: '#050000', surface: '#080000', surface2: '#160309',
                 text: '#fff5f2', muted: '#c98a96',
@@ -381,7 +397,7 @@
                 position: 'center',
                 dim: 0.35
             },
-            sound: { enabled: false, volume: 55, pack: 'soft', customName: '' }
+            sound: { enabled: false, volume: 55, pack: 'soft', customName: '', allowLoud: false }
         };
     }
 
@@ -409,12 +425,17 @@
         out.metrics.border = clamp(out.metrics.border, 0, 3);
         out.metrics.cardOpacity = clamp(out.metrics.cardOpacity, 0.5, 1);
         out.metrics.glow = clamp(out.metrics.glow, 0, 30);
-        out.metrics.displayFont = raw.metrics && raw.metrics.displayFont === 'serif' ? 'serif' : 'sans';
+        out.metrics.displayFont = raw.metrics && FONT_FAMILIES[raw.metrics.displayFont]
+            ? raw.metrics.displayFont
+            : 'sans';
         out.metrics.animStyle = raw.metrics && ['auto', 'gold', 'glow', 'soft', 'none'].indexOf(raw.metrics.animStyle) >= 0
             ? raw.metrics.animStyle
             : 'auto';
         out.metrics.animSpeed = clamp(Number(out.metrics.animSpeed) || 1, 0.7, 1.5);
-        out.fx = raw.fx === 'akashi' ? 'akashi' : 'none';
+        out.metrics.navPos = raw.metrics && ['top', 'left', 'right'].indexOf(raw.metrics.navPos) >= 0
+            ? raw.metrics.navPos
+            : 'top';
+        out.fx = raw.fx === 'akashi' ? 'akashi' : raw.fx === 'neon' ? 'neon' : 'none';
         out.style = raw.style === 'hub' ? 'hub' : 'none';
 
         if (raw.background && typeof raw.background === 'object') {
@@ -429,9 +450,11 @@
 
         if (raw.sound && typeof raw.sound === 'object') {
             out.sound.enabled = !!raw.sound.enabled;
-            // до 1000%: громкость выше 100 усиливает сигнал, компрессор в аудио
-            // не даёт ему превратиться в клиппинг.
-            if (typeof raw.sound.volume === 'number' && isFinite(raw.sound.volume)) out.sound.volume = clamp(raw.sound.volume, 0, 1000);
+            // 1000% — только если пользователь отдельно разрешил усиление.
+            out.sound.allowLoud = !!raw.sound.allowLoud;
+            if (typeof raw.sound.volume === 'number' && isFinite(raw.sound.volume)) {
+                out.sound.volume = clamp(raw.sound.volume, 0, out.sound.allowLoud ? 1000 : 100);
+            }
             if (SOUND_PACKS[raw.sound.pack] || raw.sound.pack === 'custom') out.sound.pack = raw.sound.pack;
             if (typeof raw.sound.customName === 'string') out.sound.customName = raw.sound.customName.slice(0, 60);
         }
@@ -596,13 +619,14 @@
         root.style.setProperty('--t-card-bg', hexToRgba(tokens.surface, m.cardOpacity));
         root.style.setProperty('--t-lesson-card-bg', hexToRgba(tokens.lessonBg, m.cardOpacity));
         root.style.setProperty('--t-lesson-card-bg-hover', hexToRgba(tokens.lessonBgHover, m.cardOpacity));
-        root.style.setProperty('--t-display-font', m.displayFont === 'serif' ? "Georgia, 'Times New Roman', 'Noto Serif', serif" : 'inherit');
+        root.style.setProperty('--t-display-font', FONT_FAMILIES[m.displayFont] || 'inherit');
         root.style.setProperty('--t-glow', String(m.glow || 0));
         root.setAttribute('data-glow', m.glow > 0 ? 'on' : 'off');
         root.setAttribute('data-fx', state.fx || 'none');
         root.setAttribute('data-motion', m.motion ? 'on' : 'off');
         root.setAttribute('data-anim', m.animStyle || 'auto');
         root.style.setProperty('--anim-speed', String(m.animSpeed || 1));
+        root.setAttribute('data-nav', m.navPos || 'top');
 
         var meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.setAttribute('content', tokens.bg);
@@ -1040,7 +1064,7 @@
         if (!data) { playWith(kind, 'soft', true); return; }
         var a = audio();
         if (!a) return;
-        var volume = Math.min(10, state.sound.volume / 100);
+        var volume = Math.min(state.sound.allowLoud ? 10 : 1, state.sound.volume / 100);
         var rate = kind === 'switch' ? 1.08 : kind === 'success' ? 1.15 : kind === 'error' ? 0.9 : 1;
         var start = function (buffer) {
             try {
@@ -1090,7 +1114,7 @@
         if (!force && now - lastSound < 35) return;
         lastSound = now;
         var pack = SOUND_PACKS[packName] || SOUND_PACKS.soft;
-        var volume = state.sound.volume / 100;
+        var volume = Math.min(state.sound.allowLoud ? 10 : 1, state.sound.volume / 100);
         var gainValue = pack.gain * volume;
         if (gainValue <= 0) return;
         var notes = soundNotes(kind, pack);
@@ -1134,7 +1158,8 @@
             state: a ? a.state : 'not-created',
             enabled: state.sound.enabled,
             volume: state.sound.volume,
-            pack: state.sound.pack
+            pack: state.sound.pack,
+            allowLoud: !!state.sound.allowLoud
         };
     }
 

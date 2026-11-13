@@ -22,6 +22,7 @@
 
     border-radius: 999px;
     border: 1px solid rgb(255 226 178 / .55);
+    border: 1px solid color-mix(in srgb, var(--t-accent) 72%, #fff 18%);
 
     background-color: #b9863f;
     /* фолбэк для браузеров без color-mix */
@@ -54,11 +55,13 @@
         inset 0 1px 0 rgb(255 255 255 / .45),
         inset 0 -1px 0 rgb(90 55 20 / .45),
         0 6px 20px -8px color-mix(in srgb, var(--t-accent) 65%, transparent),
-        0 0 26px color-mix(in srgb, var(--t-accent) 45%, transparent),
+        0 0 18px color-mix(in srgb, var(--t-accent) 40%, transparent),
         0 12px 26px -18px rgb(0 0 0 / .9);
 
     pointer-events: none;
     opacity: 0;
+    /* Мягкое появление/растворение капсулы — без резкого моргания. */
+    transition: opacity .12s linear;
     /* Блик включаем только на время полёта капсулы (класс dock-moving).
        Постоянная анимация градиента у невидимого элемента зря жгла кадры. */
     will-change: auto;
@@ -74,7 +77,7 @@ html[data-anim="glow"] #days-tabs .dock-pill {
         color-mix(in srgb, var(--t-accent) 55%, transparent),
         transparent 72%
     );
-    box-shadow: 0 0 38px 14px color-mix(in srgb, var(--t-accent) 42%, transparent);
+    box-shadow: 0 0 24px 8px color-mix(in srgb, var(--t-accent) 38%, transparent);
 }
 html[data-anim="glow"] #days-tabs.dock-moving .dock-pill { animation: none; }
 
@@ -104,16 +107,54 @@ html[data-anim="soft"] #days-tabs.dock-moving .dock-pill { animation: none; }
     z-index: 1;
 }
 
+/* «Вода»: пока капсула летит, вкладки чуть проседают и пружинят обратно. */
+#days-tabs.dock-moving .day-tab {
+    transform: scaleY(.97);
+    transition: transform .18s ease;
+}
+#days-tabs.dock-moving .day-tab.day-tab-active { transform: scaleY(1); }
+
+/* Приземление: кольцо-рябь и мягкая пружина на целевой вкладке. */
+#days-tabs .day-tab.dock-landed::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--t-accent) 60%, transparent);
+    pointer-events: none;
+    animation: dock-ripple .55s cubic-bezier(.2, .7, .2, 1) forwards;
+}
+#days-tabs .day-tab.dock-landed {
+    animation: dock-settle .45s cubic-bezier(.2, .7, .2, 1);
+}
+@keyframes dock-ripple {
+    0% { opacity: .9; transform: scale(.96); }
+    100% { opacity: 0; transform: scale(1.18); }
+}
+@keyframes dock-settle {
+    0% { transform: scale(1.05); }
+    55% { transform: scale(.99); }
+    100% { transform: scale(1); }
+}
+
 /*
  * Пока капсула летит, фон снимаем у всех вкладок — остаётся чистый текст.
  * Селектор с лишним классом, чтобы перебить !important из theme.css.
  */
-html[data-theme] #days-tabs.dock-moving .day-tab,
+/* Пока капсула летит, вкладки остаются с обводкой. Фон делаем
+   полупрозрачным, чтобы капсула просвечивала сквозь них, как через воду,
+   а не стирала все рамки на время анимации. */
+html[data-theme] #days-tabs.dock-moving .day-tab {
+    background-color: transparent !important;
+    background-color: color-mix(in srgb, var(--t-tab-pill-bg) 45%, transparent) !important;
+    background-image: none !important;
+    border-color: var(--t-tab-pill-border) !important;
+    box-shadow: none !important;
+}
 html[data-theme] #days-tabs.dock-moving .day-tab.day-tab-active {
     background-color: transparent !important;
-    background-image: none !important;
-    border-color: transparent !important;
-    box-shadow: none !important;
+    background-color: color-mix(in srgb, var(--t-tab-pill-bg) 45%, transparent) !important;
+    border-color: var(--t-tab-active-border) !important;
 }
 
 /* в полёте подписи чуть плотнее — чтобы читались на золоте */
