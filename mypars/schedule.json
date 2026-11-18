@@ -3439,8 +3439,8 @@
         "number": "1",
         "time": "08:10-9:30",
         "subject": "Детали машин",
-        "teacher": "Задорожный Ф К",
-        "room": "А212",
+        "teacher": "Айсин Р К",
+        "room": "А110",
         "substituted": true
       },
       {
@@ -8752,8 +8752,9 @@
         "number": "3",
         "time": "14:50-16:10",
         "subject": "МДК 03.01 Трансп.-эксп. деят.  и обеспеч. гр. перевоз. на тр.",
-        "teacher": "Ерин В В",
-        "room": "А405"
+        "teacher": "Бихе А В",
+        "room": "А317",
+        "substituted": true
       },
       {
         "number": "4",
@@ -9330,8 +9331,9 @@
         "number": "2",
         "time": "13:30-14:30",
         "subject": "МДК.02.02 Орг. пас. перев.",
-        "teacher": "Ерин В В",
-        "room": "А317"
+        "teacher": "Бихе А В",
+        "room": "А317",
+        "substituted": true
       },
       {
         "number": "3",
@@ -15455,8 +15457,8 @@
         "number": "2",
         "time": "09:40-11:00",
         "subject": "Тех.мех",
-        "teacher": "Задорожный Ф К",
-        "room": "А212",
+        "teacher": "Айсин Р К",
+        "room": "А110",
         "substituted": true
       },
       {
